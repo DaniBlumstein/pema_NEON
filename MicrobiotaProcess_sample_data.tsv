@@ -1,0 +1,70 @@
+sampleid	labtracking	scientificName	eventDate	year	month	day	startDayOfYear	lifeStage	sex	stateProvince	decimalLatitude	decimalLongitude	minimumElevationInMeters	Region	land_use_location	land_use	rain	temp
+#q2:types	categorical	categorical	categorical	numerical	numerical	numerical	numerical	categorical	categorical	categorical	numerical	numerical	numerical	categorical	categorical	categorical	numerical	numerical
+55	R3309	Peromyscus maniculatus	5/23/18	2018	5	23	143	adult	F	Colorado	40.473576	-103.02006	1360	west	Cultivated Crops west	Cultivated Crops	306.8200073	9.850000381
+76	R3839	Peromyscus maniculatus	8/9/19	2019	8	9	221	adult	M	Colorado	40.470356	-103.01388	1358	west	Cultivated Crops west	Cultivated Crops	307.1560059	9.86000061
+78	R3604	Peromyscus maniculatus	4/8/19	2019	4	8	98	adult	F	Colorado	40.462418	-103.03546	1361	west	Cultivated Crops west	Cultivated Crops	308.70401	9.86000061
+79	R3200	Peromyscus maniculatus	4/9/19	2019	4	9	99	adult	F	Colorado	40.468354	-103.0135	1358	west	Cultivated Crops west	Cultivated Crops	307.1560059	9.86000061
+80	R3970	Peromyscus maniculatus	6/12/19	2019	6	12	163	adult	M	Colorado	40.473576	-103.02006	1360	west	Cultivated Crops west	Cultivated Crops	306.8200073	9.850000381
+81	R3928	Peromyscus maniculatus	6/11/19	2019	6	11	162	adult	M	Colorado	40.468354	-103.0135	1358	west	Cultivated Crops west	Cultivated Crops	307.1560059	9.86000061
+111	R4633	Peromyscus maniculatus	8/19/20	2020	8	19	232	adult	F	Kansas	39.125776	-96.640728	329	west	Cultivated Crops west	Cultivated Crops	946.2650146	12.62000084
+74	R5782	Peromyscus maniculatus	10/16/18	2018	10	16	289	adult	M	Kansas	39.216637	-96.59927	333	west	Cultivated Crops west	Cultivated Crops	764.90802	12.55000019
+91	R4143	Peromyscus maniculatus	6/4/19	2019	6	4	155	adult	F	Kansas	39.216637	-96.59927	333	west	Cultivated Crops west	Cultivated Crops	764.90802	12.55000019
+131	R6357	Peromyscus maniculatus	10/5/21	2021	10	5	278	adult	M	Kansas	39.216637	-96.59927	333	west	Cultivated Crops west	Cultivated Crops	764.90802	12.55000019
+82	R5010	Peromyscus leucopus or maniculatus	8/7/19	2019	8	7	219	subadult	F	New Hampshire	44.05735	-71.308646	431	east	Deciduous Forest east	Deciduous Forest	1402.68103	6.580000401
+66	R4347	Peromyscus maniculatus	6/14/18	2018	6	14	165	adult	F	New Hampshire	44.047478	-71.315451	580	east	Deciduous Forest east	Deciduous Forest	1429.850098	5.930000305
+112	R4155	Peromyscus maniculatus	9/27/20	2020	9	27	271	adult	M	New Hampshire	44.05735	-71.308646	431	east	Deciduous Forest east	Deciduous Forest	1402.68103	6.580000401
+60	R2659	Peromyscus maniculatus	10/11/18	2018	10	11	284	subadult	M	Tennessee	35.702253	-83.360191	615	east	Deciduous Forest east	Deciduous Forest	2284.87915	12.80000019
+133	R1815	Peromyscus maniculatus	9/28/16	2016	9	29	273	adult	F	Tennessee	35.702253	-83.360191	615	east	Deciduous Forest east	Deciduous Forest	2284.87915	12.80000019
+134	R2043	Peromyscus maniculatus	10/24/17	2017	10	24	297	adult	F	Tennessee	35.702253	-83.360191	615	east	Deciduous Forest east	Deciduous Forest	2284.87915	12.80000019
+136	R2047	Peromyscus maniculatus	10/24/17	2017	10	24	297	subadult	M	Tennessee	35.702253	-83.360191	615	east	Deciduous Forest east	Deciduous Forest	2284.87915	12.80000019
+94	R2755	Peromyscus maniculatus	6/13/19	2019	6	13	164	adult	M	Virginia	37.427518	-80.500559	913	east	Deciduous Forest east	Deciduous Forest	1782.84314	10.92000008
+95	R3221	Peromyscus maniculatus	6/13/19	2019	6	13	164	juvenile	M	Virginia	37.427518	-80.500559	913	east	Deciduous Forest east	Deciduous Forest	1782.84314	10.92000008
+99	R2302	Peromyscus maniculatus	7/17/18	2018	7	17	198	subadult	M	Virginia	37.427968	-80.511905	893	east	Deciduous Forest east	Deciduous Forest	1783.857056	11.00000095
+124	R3568	Peromyscus maniculatus	4/22/21	2021	4	22	112	adult	F	Virginia	37.372601	-80.52293	1177	east	Deciduous Forest east	Deciduous Forest	1745.161133	9.540000916
+68	R4494	Peromyscus maniculatus	8/1/18	2018	8	1	213	adult	F	Wisconsin	45.810968	-90.091985	508	east	Deciduous Forest east	Deciduous Forest	953.3760376	4.880000114
+69	R4721	Peromyscus maniculatus	8/1/18	2018	8	1	213	adult	F	Wisconsin	45.810968	-90.091985	508	east	Deciduous Forest east	Deciduous Forest	953.3760376	4.880000114
+77	R5463	Peromyscus maniculatus	8/23/19	2019	8	23	235	adult	M	Wisconsin	45.784603	-90.048055	511	east	Deciduous Forest east	Deciduous Forest	915.5580444	4.870000362
+115	R5945	Peromyscus maniculatus	6/17/20	2020	6	17	169	adult	M	Wisconsin	45.784603	-90.048055	511	east	Deciduous Forest east	Deciduous Forest	915.5580444	4.870000362
+116	R6207	Peromyscus maniculatus	6/16/20	2020	6	16	168	adult	M	Wisconsin	45.826963	-90.084426	496	east	Deciduous Forest east	Deciduous Forest	936.4300537	4.890000343
+56	R2981	Peromyscus maniculatus	7/12/18	2018	7	12	193	adult	M	Colorado	40.201684	-105.48187	2641	west	Evergreen Forest west	Evergreen Forest	386.7720032	5.900000095
+59	R3111	Peromyscus maniculatus	8/8/18	2018	8	8	220	adult	M	Colorado	40.197704	-105.48524	2623	west	Evergreen Forest west	Evergreen Forest	386.7720032	5.900000095
+122	R4163	Peromyscus maniculatus	7/7/21	2021	7	7	188	adult	F	Colorado	40.201684	-105.48187	2641	west	Evergreen Forest west	Evergreen Forest	386.7720032	5.900000095
+123	R5937	Peromyscus maniculatus	10/5/21	2021	10	5	278	adult	F	Colorado	40.162417	-105.53316	2755	west	Evergreen Forest west	Evergreen Forest	634.5360107	4.019000053
+107	R0698	Peromyscus maniculatus	7/2/18	2018	7	2	183	adult	M	Washington	45.768772	-122.36299	466	west	Evergreen Forest west	Evergreen Forest	2768.571045	9.910000801
+62	R0107	Peromyscus maniculatus	7/6/18	2018	7	6	187	adult	F	Wyoming	44.938201	-110.63098	2049	west	Evergreen Forest west	Evergreen Forest	528.3900146	4.160000324
+63	R0103	Peromyscus maniculatus	6/10/18	2018	6	10	161	adult	F	Wyoming	44.938201	-110.63098	2049	west	Evergreen Forest west	Evergreen Forest	528.3900146	4.160000324
+98	R0167	Peromyscus maniculatus	8/8/18	2018	8	8	220	adult	M	Wyoming	44.943811	-110.64658	2099	west	Shrub/Scrub west	Shrub/Scrub	525.519043	3.520000219
+103	R1636	Peromyscus maniculatus	3/13/18	2018	3	13	72	adult	M	California	37.092605	-119.74473	342	west	Grassland/Herbaceous west	Grassland/Herbaceous	222.9860077	18.04000092
+104	R1848	Peromyscus maniculatus	3/13/18	2018	3	13	72	adult	M	California	37.081572	-119.71512	318	west	Grassland/Herbaceous west	Grassland/Herbaceous	221.3750153	18.07999992
+105	R1324	Peromyscus maniculatus	3/15/18	2018	3	15	74	adult	F	California	37.101706	-119.74903	368	west	Grassland/Herbaceous west	Grassland/Herbaceous	227.6980133	17.84000015
+106	R1432	Peromyscus maniculatus	3/15/18	2018	3	15	74	adult	M	California	37.101706	-119.74903	368	west	Grassland/Herbaceous west	Grassland/Herbaceous	227.6980133	17.84000015
+57	NR3669	Peromyscus maniculatus	8/14/18	2018	8	14	226	adult	M	Colorado	40.054343	-105.57275	3471	west	Grassland/Herbaceous west	Grassland/Herbaceous	844.8480225	0.720000029
+90	R4106	Peromyscus maniculatus	5/31/19	2019	5	31	151	adult	M	Kansas	39.070111	-96.588843	409	west	Grassland/Herbaceous west	Grassland/Herbaceous	874.6110229	12.39000034
+71	R4004	Peromyscus maniculatus	5/24/18	2018	5	24	144	adult	M	North Dakota	46.800461	-100.9144	537	west	Grassland/Herbaceous west	Grassland/Herbaceous	225.0380096	6.490000248
+72	R3772	Peromyscus maniculatus	5/25/18	2018	5	25	145	adult	F	North Dakota	46.788065	-100.91388	560	west	Grassland/Herbaceous west	Grassland/Herbaceous	223.381012	6.470000267
+73	R4212	Peromyscus maniculatus	9/17/18	2018	9	17	260	adult	M	North Dakota	46.799664	-100.91077	547	west	Grassland/Herbaceous west	Grassland/Herbaceous	225.0310059	6.450000286
+75	R3927	Peromyscus maniculatus	7/19/18	2018	7	19	200	adult	F	North Dakota	46.788065	-100.91388	560	west	Grassland/Herbaceous west	Grassland/Herbaceous	223.381012	6.470000267
+117	R6025	Peromyscus maniculatus	6/30/20	2020	6	30	182	adult	F	North Dakota	46.799664	-100.91077	547	west	Grassland/Herbaceous west	Grassland/Herbaceous	225.0310059	6.450000286
+119	R6045	Peromyscus maniculatus	6/30/20	2020	6	30	182	adult	M	North Dakota	46.800461	-100.9144	537	west	Grassland/Herbaceous west	Grassland/Herbaceous	225.0380096	6.490000248
+96	R3404	Peromyscus maniculatus	7/2/19	2019	7	2	183	adult	M	Oklahoma	35.413861	-99.058786	516	west	Grassland/Herbaceous west	Grassland/Herbaceous	659.7530518	15.7300005
+128	R3790	Peromyscus maniculatus	7/13/21	2021	7	13	194	adult	F	Oklahoma	35.413861	-99.058786	516	west	Grassland/Herbaceous west	Grassland/Herbaceous	659.7530518	15.7300005
+129	R3735	Peromyscus maniculatus	8/31/21	2021	8	31	243	adult	F	Oklahoma	35.413861	-99.058786	516	west	Grassland/Herbaceous west	Grassland/Herbaceous	659.7530518	15.7300005
+130	R3683	Peromyscus maniculatus	9/28/21	2021	9	28	271	adult	F	Oklahoma	35.413861	-99.058786	516	west	Grassland/Herbaceous west	Grassland/Herbaceous	659.7530518	15.7300005
+93	R1447	Peromyscus maniculatus	7/25/19	2019	7	25	206	adult	M	Washington	45.740362	-122.30974	620	west	Shrub/Scrub west	Shrub/Scrub	3005.351074	9.770000458
+108	R0649	Peromyscus maniculatus	7/6/18	2018	7	6	187	adult	F	Washington	45.740362	-122.30974	620	west	Shrub/Scrub west	Shrub/Scrub	3005.351074	9.770000458
+83	R5057	Peromyscus leucopus or maniculatus	9/4/19	2019	9	4	247	adult	M	New Hampshire	44.046877	-71.305115	464	east	Mixed Forest east	Mixed Forest	1424.418091	6.410000324
+65	R4357	Peromyscus maniculatus	6/12/18	2018	6	12	163	adult	F	New Hampshire	44.042898	-71.275059	423	east	Mixed Forest east	Mixed Forest	1436.719116	6.510000229
+92	R1320	Peromyscus maniculatus	6/29/19	2019	6	29	180	adult	M	Washington	45.746374	-122.3814	504	west	Evergreen Forest west	Evergreen Forest	2895.413086	10.20000076
+97	L3484	Peromyscus maniculatus	8/29/19	2019	8	29	241	adult	M	Oklahoma	35.41942	-99.055808	522	west	Grassland/Herbaceous west	Grassland/Herbaceous	659.7530518	15.7300005
+127	R3973	Peromyscus maniculatus	7/14/21	2021	7	14	195	adult	M	Oklahoma	35.416811	-99.050808	515	west	Grassland/Herbaceous west	Grassland/Herbaceous	671.3920288	15.7300005
+84	R3929	Peromyscus maniculatus	9/27/19	2019	9	27	270	adult	M	Utah	40.206225	-112.42849	1604	west	Shrub/Scrub west	Shrub/Scrub	110.9490051	9.720000267
+85	R3960	Peromyscus maniculatus	8/2/19	2019	8	2	214	adult	M	Utah	40.186515	-112.47408	1716	west	Shrub/Scrub west	Shrub/Scrub	103.2300034	9.290000916
+87	R3995	Peromyscus maniculatus	8/2/19	2019	8	2	214	adult	M	Utah	40.174342	-112.48072	1722	west	Shrub/Scrub west	Shrub/Scrub	102.3630066	9.290000916
+120	R4142	Peromyscus maniculatus	9/7/21	2021	9	7	250	adult	M	Utah	40.174342	-112.48072	1722	west	Shrub/Scrub west	Shrub/Scrub	102.3630066	9.290000916
+121	R4168	Peromyscus maniculatus	10/5/21	2021	10	5	278	adult	F	Utah	40.174342	-112.48072	1722	west	Shrub/Scrub west	Shrub/Scrub	102.3630066	9.290000916
+137	R2113	Peromyscus maniculatus	5/1/17	2017	5	1	121	subadult	F	Utah	40.186515	-112.47408	1716	west	Shrub/Scrub west	Shrub/Scrub	103.2300034	9.290000916
+61	R1194	Peromyscus maniculatus	6/7/18	2018	6	7	158	adult	F	Washington	45.76854	-122.30036	552	west	Shrub/Scrub west	Shrub/Scrub	2973.901123	9.760000229
+109	R1094	Peromyscus maniculatus	8/4/18	2018	8	4	216	adult	F	Washington	45.76854	-122.30036	552	west	Shrub/Scrub west	Shrub/Scrub	2973.901123	9.760000229
+64	R0001	Peromyscus maniculatus	6/10/18	2018	6	10	161	adult	M	Wyoming	44.95647	-110.5103	2123	west	Shrub/Scrub west	Shrub/Scrub	484.2730103	3.710000277
+88	R0221	Peromyscus maniculatus	7/10/19	2019	7	10	191	adult	F	Wyoming	44.918169	-110.40871	1894	west	Shrub/Scrub west	Shrub/Scrub	403.2620239	3.150000095
+89	R0978	Peromyscus maniculatus	7/11/19	2019	7	11	192	adult	M	Wyoming	44.957982	-110.58939	2017	west	Shrub/Scrub west	Shrub/Scrub	473.9460144	4.320000172

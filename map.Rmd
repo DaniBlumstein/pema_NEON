@@ -1,0 +1,92 @@
+```{r}
+# Install required packages if not already installed
+#install.packages(c("sf", "rnaturalearth", "rnaturalearthdata", "ggplot2"))
+
+library(sf)
+library(rnaturalearth)
+library(ggplot2)
+library(maps)
+library(cowplot)
+library(sp)
+library(raster)
+library(scales)
+library(geodata)
+library(tidyterra)
+library(ggspatial)
+library(terra)
+library(plotly)
+library(readxl)
+library(wesanderson) 
+
+raster_obj <- rast("Annual_NLCD_LndCov_2020_CU_C1V1/Annual_NLCD_LndCov_2020_CU_C1V1.tif")
+
+# Load the US map
+us <- ne_states(country = "United States of America", returnclass = "sf")
+
+# Keep only the lower 48 states
+lower48 <- us[!us$name %in% c("Alaska", "Hawaii", "Puerto Rico"), ]
+
+# Load rivers (scale = large)
+rivers <- ne_download(scale = "large", type = "rivers_lake_centerlines", category = "physical", returnclass = "sf")
+
+# Crop rivers to lower 48 bounding box
+bbox <- st_bbox(lower48)
+rivers <- st_crop(rivers, bbox)
+
+# Filter rivers by approximate names (case insensitive)
+major_rivers <- c("Mississippi", "Missouri", "Ohio", "Arkansas", "Illinois", "Tennessee")
+rivers_major <- rivers[grepl(paste(major_rivers, collapse="|"), rivers$name, ignore.case = TRUE), ]
+
+
+#get elevation data
+elevation_data <- elevation_30s(country="USA", path=tempdir() )
+
+dem = crop(elevation_data, bbox, snap= 'out')
+## crop and mask
+r1 <- crop(dem, extent(bbox))
+# Reproject raster to match lower48 if needed
+r1 <- project(r1, crs(lower48))
+
+# Mask raster outside Lower 48 polygon
+r1_masked <- mask(r1, vect(lower48))
+
+
+points <- read_excel("metadata.xlsx", sheet = "metadata_V3")
+
+p1 <- vect(points, geom = c("decimalLongitude", "decimalLatitude"), crs = "+proj=longlat +datum=WGS84")
+
+# 3️⃣ Convert to sf
+points_sf <- st_as_sf(p1)  
+# points_sf now keeps all columns from `points` automatically
+
+colors_points <- c("black", "black")
+colors_rivers <- c("#ADC491","#2B99B1", "#2CBA91","#EACB2B", "#36A4AB","#E78F0A","#D55E00")
+
+points_colors <- setNames(
+  rep(colors_points, length.out = length(unique(points_sf$Mississippi_River_Label))),
+  unique(points_sf$Mississippi_River_Label)
+)
+
+rivers_colors <- setNames(
+  rep(colors_rivers, length.out = length(unique(rivers_major$name))),
+  unique(rivers_major$name)
+)
+
+# Plot
+ggplot() +
+  geom_spatraster(data = r1_masked, aes(fill = USA_elv_msk)) +
+  geom_sf(data = rivers_major, aes(color = name), size = 1) +
+  geom_sf(data = points_sf, aes(color = as.factor(Mississippi_River_Label)), size = 2) +  # Add points
+  #labs(title = "Mississippi River and Main Tributaries (Lower 48 States)") +
+  theme_minimal() +
+  scale_fill_gradient(high = "lightgrey", low = "#555",  na.value='transparent')+
+  scale_color_manual(values = c(points_colors, rivers_colors))+
+  theme(legend.position = "none")+
+    annotation_scale(location = "bl", width_hint = 0.5) +
+  annotation_north_arrow(
+    location = "bl",
+    pad_x = unit(0, "in"),
+    pad_y = unit(0.3, "in"),
+    style = north_arrow_fancy_orienteering)
+```
+

@@ -1,0 +1,1288 @@
+---
+title: "microbiome by habitat"
+author: "Dani Blumstein"
+date: "2025-12-30"
+output: html_document
+---
+
+DB to change east west lable to region!
+```{r}
+#if (!requireNamespace("BiocManager", quietly=TRUE))
+#    install.packages("BiocManager")
+## BiocManager::install("BiocUpgrade") ## you may need this
+#BiocManager::install("MicrobiotaProcess",force = TRUE)
+#BiocManager::install("phyloseq",force = TRUE)
+#BiocManager::install("ggtree", force = TRUE)
+#BiocManager::install("tidytree", force = TRUE, type = "source")
+
+#install.packages("remotes")
+#remotes::install_github("YuLab-SMU/ggtree")
+#remotes::install_github("YuLab-SMU/MicrobiotaProcess")
+
+
+
+#install.packages(
+#  "microViz",
+#  repos = c(davidbarnett = "https://david-barnett.r-universe.dev", getOption("repos"))
+#)
+
+#if (!requireNamespace("devtools", quietly = TRUE)){install.packages("devtools")}
+#devtools::install_github("jbisanz/qiime2R")
+#devtools::install_github("zpneal/backbone", ref = "devel", build_vignettes = TRUE)
+
+suppressPackageStartupMessages({
+    library(MicrobiotaProcess) 
+    library(phyloseq)
+    library(ggplot2)
+    library(tidyverse) 
+    library(vegan) 
+    library(coin) 
+    library(reshape2) 
+    library(ggnewscale)
+    library(qiime2R)
+    library(readxl)
+    library(dplyr)
+    library(microViz)
+    library(UpSetR)
+    library(patchwork)
+    library(ggtree)
+    library(tidytree)
+    library(phylobase)
+    library(ggtreeExtra)
+    library(sf)
+    library(phytools)
+    library(SummarizedExperiment)
+    library(remotes)
+    library(terra)
+    library(ggspatial)
+    library(stringr)
+    library(purrr)
+    library(gridExtra)
+})
+```
+
+```{r}
+habitat_colors <- c(
+  # East of Mississippi (cool / forested)
+  "Deciduous Forest"     = "#0072B2",  # true blue
+  "Mixed Forest"         = "#2CA25F",  # teal-green
+  
+  # West of Mississippi (warm / dry / managed)
+  "Cultivated Crops"     = "#E69F00",  # orange (CVD-safe, high salience)
+  "Evergreen Forest"     = "#A0522D",  # 
+  "Grassland/Herbaceous" = "#F0E442",  # yellow (excellent contrast on maps)
+  "Shrub/Scrub"          = "#D55E00"   # vermillion (distinct from crops)
+)
+  
+east_west_colors <- c(
+  "east" = "#6B8FB3",  # muted steel blue
+  "west" = "#B07C59"   # muted warm tan
+)
+
+```
+
+```{r}
+mpse_samples <- mp_import_qiime2(otuqza="data/microbiome/rarefied-table.qza", 
+                          taxaqza="data/microbiome/taxonomy.qza", 
+                          mapfilename="data/microbiome/metadata_edit.tsv")
+mpse_samples
+
+#Set labtracking column as the sample names
+new_names <- colData(mpse_samples)$labtracking
+
+# Make sure they are unique
+stopifnot(!anyDuplicated(new_names))
+
+# Assign as sample names
+colnames(mpse_samples) <- new_names
+rownames(colData(mpse_samples)) <- new_names
+
+#filter to only pema and drop AZ
+mpse_samples_filtered <- mpse_samples %>%
+  filter(specificEpithet == "maniculatus") %>%
+  filter(stateProvince != "Arizona")
+
+asv_table <- assay(mpse_samples_filtered, "Abundance")
+```
+
+```{r}
+#use the gps points and USGS national land coverage data to assign habitat
+point <- as.data.frame(colData(mpse_samples_filtered))
+point$decimalLatitude <- as.numeric(point$decimalLatitude)
+point$decimalLongitude <- as.numeric(point$decimalLongitude)
+
+p1 <- vect(point, geom = c("decimalLongitude", "decimalLatitude"), crs = "+proj=longlat +datum=WGS84")
+
+#Convert to sf
+points_sf <- st_as_sf(p1)  
+
+#raster data from https://www.mrlc.gov/data
+raster_obj <- rast("Annual_NLCD_LndCov_2020_CU_C1V1/Annual_NLCD_LndCov_2020_CU_C1V1.tif")
+
+#raster data from https://prism.oregonstate.edu/data/
+rain_raster <- rast("prism_ppt_us_30s_2020/prism_ppt_us_30s_2020.tif")
+mean_temp_raster <- rast("prism_tmean_us_30s_2020/prism_tmean_us_30s_2020.tif")
+
+plot(raster_obj)
+plot(rain_raster)
+plot(mean_temp_raster)
+
+pts_sf <- st_transform(points_sf, crs(raster_obj))
+pst_sf_rain <- st_transform(points_sf, crs(rain_raster))
+pts_sf_temp <- st_transform(points_sf, crs(mean_temp_raster))
+
+# Convert sf → terra vector
+pts_vect <- vect(pts_sf)
+pts_vect_rain <- vect(pst_sf_rain)
+pts_vect_temp <- vect(pts_sf_temp)
+
+# Extract raster values
+vals <- extract(raster_obj, pts_vect)
+vals_rain <- extract(rain_raster, pts_vect_rain)
+vals_temp <- extract(mean_temp_raster, pts_vect_temp)
+
+# Combine with original data
+results <- pts_sf |>
+  bind_cols(
+    land_use = vals[,2]
+  )
+
+results$land_use_location <- paste(results$land_use, results$Mississippi_River_Label, sep = " ")
+#write_tsv(results, file = "metadata_edit2.tsv")
+
+colData(mpse_samples_filtered)$land_use_location <- results$land_use_location
+colData(mpse_samples_filtered)$land_use <- results$land_use
+
+results <- pst_sf_rain |>
+  bind_cols(
+    prism_ppt_us_30s_2020 = vals_rain[,2]
+  )
+colData(mpse_samples_filtered)$rain <- results$prism_ppt_us_30s_2020
+
+results <- pts_sf_temp |>
+  bind_cols(
+    prism_tmean_us_30s_2020 = vals_temp[,2]
+  )
+colData(mpse_samples_filtered)$temp <- results$prism_tmean_us_30s_2020
+
+# Extract sample data from MPSE object
+sample_data_df <- colData(mpse_samples_filtered)
+
+# Export as tab-delimited text file
+write.table(sample_data_df, 
+            file = "MicrobiotaProcess_sample_data.txt", 
+            sep = "\t", 
+            quote = FALSE, 
+            row.names = TRUE)
+
+```
+
+#sort the metadata and the otu table
+metadata_filtered_sorted <- metadata_filtered[order(metadata_filtered$labtracking),]
+otu_sorted <- otu[order(rownames(otu)),]
+
+#check the data for order 
+unique(rownames(otu_sorted) == metadata_filtered_sorted$labtracking) # OK
+
+based off gabri code
+
+### Calculate alpha diversity
+metadata_filtered_sorted$Richness.rar<-specnumber(otu_sorted) # Counts otu number
+metadata_filtered_sorted$Shannon.rar<-vegan::diversity(otu_sorted, index="shannon") ## calculate Shannon H
+
+a = ggplot(metadata_filtered_sorted, aes(x = land_use_location, y = Richness.rar, color = stateProvince)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.8), alpha = 0.7) +
+  theme_classic() +
+  labs(y = "Number of otus", x = "Mississippi River Split") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+a
+
+
+
+### Beta diversity 
+##### Beta diversity ----------------
+set.seed(12)
+bac.dist<-vegdist(otu_sorted, method="bray") ### this calculates BC dissimilaries
+bac.dist.sor<-vegdist(otu_sorted, method="bray", binary  = TRUE ) ### this calculates Sorensen dissimilaries
+
+set.seed(12)
+bac.nmds<-metaMDS(bac.dist, k=2, try=999)
+bac.nmds$stress #0.21
+stress= paste("stress = ", round(bac.nmds$stress, digits = 2))
+
+metadata_filtered$Axis01<-bac.nmds$points[,1]
+metadata_filtered$Axis02<-bac.nmds$points[,2]
+
+# install.packages("viridis") if needed
+bac_nmds <- ggplot(metadata_filtered, aes(x = Axis01, y = Axis02)) +
+  geom_point(aes(color = stateProvince, shape = land_use_location), size = 2, alpha = 0.8) +
+  stat_ellipse(aes(fill = land_use_location), geom = "polygon", alpha = 0.45, level = 0.68, show.legend = FALSE) +
+  scale_color_viridis_d(option = "turbo", begin = 0.05, end = 0.95) +
+  scale_fill_viridis_d(option  = "turbo", begin = 0.05, end = 0.95) +
+  theme_classic() +
+  labs(x = "NMDS1", y = "NMDS2", shape = "land_use_location") +
+  ggtitle("Bray Curtis dissimilarity")
+bac_nmds
+
+#perm = adonis2(bac.dist ~ land_use_location + stateProvince, data = metadata_filtered, by = "margin")
+#perm
+
+vignette used for code chunks below: https://bioconductor.org/packages/release/bioc/vignettes/MicrobiotaProcess/inst/doc//MicrobiotaProcess.html
+
+
+Rarefied species richness
+```{r}
+mpse_samples_filtered %<>% mp_rrarefy()
+
+mpse_samples_filtered %<>% 
+    mp_cal_rarecurve(
+        .abundance = RareAbundance,
+        chunks = 400
+    )
+# default will display the confidence interval around smooth.
+# se=TRUE
+p1 <- mpse_samples_filtered %>% 
+      mp_plot_rarecurve(
+         .rare = RareAbundanceRarecurve, 
+         .alpha = Observe,
+      )
+
+p2 <- mpse_samples_filtered %>% 
+      mp_plot_rarecurve(
+         .rare = RareAbundanceRarecurve, 
+         .alpha = Observe, 
+         .group = land_use_location)
+      #) +
+      #scale_color_manual(values=c("#00A087FF", "#3C5488FF")) +
+      #scale_fill_manual(values=c("#00A087FF", "#3C5488FF"), guide="none")
+
+# combine the samples belong to the same groups
+p3 <- mpse_samples_filtered %>% 
+      mp_plot_rarecurve(
+         .rare = RareAbundanceRarecurve, 
+         .alpha = "Observe", 
+         .group = land_use_location, 
+         plot.group = TRUE)
+      #) +
+       #scale_color_manual(values=c("#00A087FF", "#3C5488FF")) +
+       #scale_fill_manual(values=c("#00A087FF", "#3C5488FF"),guide="none")  
+
+p1 
+p2
+p3
+```
+
+calculate alpha index and visualization
+```{r}
+mpse_samples_filtered %<>% 
+    mp_cal_alpha(.abundance=RareAbundance)
+
+f1 <- mpse_samples_filtered %>% 
+      mp_plot_alpha(
+        .group=land_use_location, 
+        .alpha=c(Observe, Chao1, ACE, Shannon, Simpson, Pielou))
+      #) +
+      #scale_fill_manual(values=c("#00A087FF", "#3C5488FF"), guide="none") +
+      #scale_color_manual(values=c("#00A087FF", "#3C5488FF"), guide="none")
+
+f2 <- mpse_samples_filtered %>%
+      mp_plot_alpha(
+        .alpha=c(Observe, Chao1, ACE, Shannon, Simpson, Pielou)
+      )
+
+f1 / f2
+```
+
+visualization of taxonomy abundance
+```{r}
+mpse_samples_filtered %<>%
+    mp_cal_abundance( # for each samples
+      .abundance = RareAbundance
+    ) %>%
+    mp_cal_abundance( # for each groups 
+      .abundance=RareAbundance,
+      .group=land_use_location
+    )
+
+# visualize the relative abundance of top 20 phyla for each sample.
+p1 <- mpse_samples_filtered %>%
+         mp_plot_abundance(
+           .abundance=RareAbundance,
+           .group=land_use_location, 
+           taxa.class = Phylum, 
+           topn = 20,
+           relative = TRUE
+         )
+# visualize the abundance (rarefied) of top 20 phyla for each sample.
+p2 <- mpse_samples_filtered %>%
+          mp_plot_abundance(
+            .abundance=RareAbundance,
+            .group=land_use_location,
+            taxa.class = Phylum,
+            topn = 20,
+            relative = FALSE
+          )
+p1
+p2
+
+
+h1 <- mpse_samples_filtered %>%
+         mp_plot_abundance(
+           .abundance = RareAbundance,
+           .group = land_use_location,
+           taxa.class = Phylum,
+           relative = TRUE,
+           topn = 20,
+           geom = 'heatmap',
+           features.dist = 'euclidean',
+           features.hclust = 'average',
+           sample.dist = 'bray',
+           sample.hclust = 'average'
+         )
+
+h2 <- mpse_samples_filtered %>%
+          mp_plot_abundance(
+            .abundance = RareAbundance,
+            .group = land_use_location,
+            taxa.class = Phylum,
+            relative = FALSE,
+            topn = 20,
+            geom = 'heatmap',
+            features.dist = 'euclidean',
+            features.hclust = 'average',
+            sample.dist = 'bray',
+            sample.hclust = 'average'
+          )
+# the character (scale or theme) of figure can be adjusted by set_scale_theme
+# refer to the mp_plot_dist
+#aplot::plot_list(gglist=list(h1, h2), tag_levels="A")
+h1
+h2
+
+# visualize the relative abundance of top 20 phyla for each .group (time)
+p3 <- mpse_samples_filtered %>%
+         mp_plot_abundance(
+            .abundance=RareAbundance, 
+            .group=land_use_location,
+            taxa.class = Phylum,
+            topn = 20,
+            plot.group = TRUE
+          )
+
+# visualize the abundance of top 20 phyla for each .group (time)
+p4 <- mpse_samples_filtered %>%
+          mp_plot_abundance(
+             .abundance=RareAbundance,
+             .group= land_use_location,
+             taxa.class = Phylum,
+             topn = 20,
+             relative = FALSE,
+             plot.group = TRUE
+           )
+p3
+p4
+```
+
+Beta diversity analysis
+```{r}
+mpse_samples_filtered %<>% 
+    mp_decostand(.abundance=Abundance)
+
+mpse_samples_filtered %<>% mp_cal_dist(.abundance=hellinger, distmethod="bray")
+
+# when .group is provided, the dot heatmap plot with group information will be return.
+
+p2 <- mpse_samples_filtered %>% mp_plot_dist(.distmethod = bray, .group = land_use_location)
+p2
+# The scale or theme of dot heatmap plot can be adjusted using set_scale_theme function.
+#p2 %>% set_scale_theme(
+#          x = scale_fill_manual(
+#                 values=c("orange", "deepskyblue"), 
+#                 guide = guide_legend(
+#                             keywidth = 1, 
+#                             keyheight = 0.5, 
+#                             title.theme = element_text(size=8),
+#                             label.theme = element_text(size=6)
+#                 )
+#              ), 
+#          aes_var = land_use_location # specific the name of variable 
+#       ) %>%
+#       set_scale_theme(
+#          x = scale_color_gradient(
+#                 guide = guide_legend(keywidth = 0.5, keyheight = 0.5)
+#              ),
+#         aes_var = bray
+#      ) %>%
+#       set_scale_theme(
+#          x = scale_size_continuous(
+#                 range = c(0.1, 3),
+#                 guide = guide_legend(keywidth = 0.5, keyheight = 0.5)
+#              ),
+#          aes_var = bray
+#       )
+
+p3 <- mpse_samples_filtered %>% mp_plot_dist(.distmethod = bray, .group = land_use_location, group.test=T, textsize=2)
+p3 
+```
+
+pcoa
+```{r}
+mpse_samples_filtered %<>% 
+    mp_cal_pcoa(.abundance=hellinger, distmethod="bray")
+
+#perform adonis or anosim to check whether it is significant to the dissimilarities of groups.
+mpse_samples_filtered %<>%
+     mp_adonis(.abundance=hellinger, .formula=~Mississippi_River_Label, distmethod="bray", permutations=9999, action="add")
+
+mpse_samples_filtered$Mississippi_River_Label <- 
+  factor(
+    mpse_samples_filtered$Mississippi_River_Label,
+    levels = c("east", "west")
+  )
+
+mpse_samples_filtered %>% mp_extract_internal_attr(name=adonis)
+
+p1 <- mpse_samples_filtered %>%
+        mp_plot_ord(
+          .ord = pcoa, 
+          .group = land_use, 
+          .color = land_use, 
+          .starshape = Mississippi_River_Label,
+          .size = 1.2,
+          .alpha = 1,
+          ellipse = TRUE,
+          show.legend = F # don't display the legend of stat_ellipse
+        )+   # land-use colors (primary)
+  scale_color_manual(
+    name   = "Locataion",
+    values = habitat_colors
+  ) +
+  scale_fill_manual(
+    name   = "Land use",
+    values = habitat_colors
+  ) 
+
+p1
+
+# The size of point also can be mapped to other variables such as Observe, or Shannon 
+# Then the alpha diversity and beta diversity will be displayed simultaneously.
+p2 <- mpse_samples_filtered %>% 
+        mp_plot_ord(
+          .ord = pcoa, 
+          .group = land_use, 
+          .color = land_use, 
+          .size = Observe, 
+          .alpha = Shannon,
+          .starshape = Mississippi_River_Label,
+          ellipse = TRUE,
+          show.legend = FALSE # don't display the legend of stat_ellipse 
+        ) +
+        scale_color_manual(
+    name   = "Locataion",
+    values = habitat_colors
+  ) +
+  scale_fill_manual(
+    name   = "Land use",
+    values = habitat_colors
+  ) +
+        scale_size_continuous(
+          range=c(0.5, 3),
+          guide = guide_legend(keywidth=0.6, keyheight=0.6, label.theme=element_text(size=6.5))
+        )
+p1 
+p2
+```
+
+below this is whole microbiome community
+___________________________________________________________________________
+physical distance matrix using GPS
+```{r}
+gps <- as.data.frame(mpse_samples_filtered@colData)[, c("labtracking","stateProvince","land_use","decimalLatitude","decimalLongitude","rain","temp","Mississippi_River_Label")]
+
+locations <- unique(gps$stateProvince)
+
+####################
+#   rain distance  #
+####################
+rain_dist <- dist(gps$rain)
+# Set row/column names
+rownames(rain_dist) <- gps$labtracking
+colnames(rain_dist) <- gps$labtracking
+rain_object <- as.dist(rain_dist)
+# Perform hierarchical clustering 
+rain_tree <- hclust(rain_object, method = "complete") 
+# Plot the dendrogram
+plot(rain_tree, main = "Rain Clustering Dendrogram")
+
+####################
+#   Temp distance  #
+####################
+temp_dist <- dist(gps$temp)
+# Set row/column names
+rownames(temp_dist) <- gps$labtracking
+colnames(temp_dist) <- gps$labtracking
+temp_object <- as.dist(temp_dist)
+# Perform hierarchical clustering 
+temp_tree <- hclust(temp_object, method = "complete") 
+# Plot the dendrogram
+plot(temp_tree, main = "Temp Clustering Dendrogram")
+
+
+####################
+# Physical distance#
+####################
+sf_points <- st_as_sf(
+  gps,
+  coords = c("decimalLongitude", "decimalLatitude"),
+  crs = 4326  # WGS84
+)
+
+dist_matrix <- st_distance(sf_points)
+
+# Set row/column names
+rownames(dist_matrix) <- gps$labtracking
+colnames(dist_matrix) <- gps$labtracking
+
+dist_object <- as.dist(dist_matrix)
+
+# Perform hierarchical clustering 
+hc_tree <- hclust(dist_object, method = "complete") 
+hc_phylo <- as.phylo(hc_tree)
+
+# Create the expanded tree
+expanded_tree <- hc_phylo
+for(stateProvince in hc_phylo$tip.label) {
+  # Find all samples for this stateProvince
+  samples <- gps$labtracking[gps$stateProvince == stateProvince]
+  
+  if(length(samples) > 0) {
+    # Find the tip position for this stateProvince
+    tip_position <- which(expanded_tree$tip.label == stateProvince)
+    
+    if(length(samples) == 1) {
+      # If only one sample, just rename the tip
+      expanded_tree$tip.label[tip_position] <- samples[1]
+    } else {
+      # If multiple samples, we need to add them as a polytomy
+      # First, rename the original tip to the first sample
+      expanded_tree$tip.label[tip_position] <- samples[1]
+      
+      # Then add the rest as sister tips (with very small branch length)
+      for(i in 2:length(samples)) {
+        expanded_tree <- phytools::bind.tip(expanded_tree, 
+                                            tip.label = samples[i],
+                                            where = tip_position,
+                                            position = 0.0001)  # tiny branch length
+      }
+    }
+  }
+}
+
+plot(expanded_tree)
+
+# Match tip labels to rows in gps
+tip_index <- match(expanded_tree$tip.label, gps$labtracking)
+
+# Get habitats for all tips (NA if no match)
+tip_habitats <- as.character(gps$land_use[tip_index])
+
+# Look up colors in habitat_colors
+tip_colors <- habitat_colors[tip_habitats]
+
+# Replace any missing colors with black
+tip_colors[is.na(tip_colors)] <- "black"
+
+#build tip color vector from your state/colors (must be same length as nrow(assoc))
+gps$tip_colors <- habitat_colors[
+  match(gps$land_use, names(habitat_colors))
+]
+names(gps$tip_colors) <- gps$labtracking
+
+phy_tree <- as.phylo(expanded_tree)
+
+# Plot the tree with colored tips
+plot(phy_tree, 
+     tip.color = tip_colors,
+     cex = 0.6,
+     no.margin = TRUE)
+
+
+```
+
+mantel test
+```{r}
+bc_dist   <- vegdist(t(asv_table), method = "bray") 
+sor_dist  <- vegdist(t(asv_table), method = "bray", binary = TRUE) 
+
+labs <- attr(bc_dist, "Labels")
+bc_mat <- as.matrix(bc_dist)[labs, labs]
+
+####################
+#   temp distance  #
+####################
+sor_mat <- as.matrix(sor_dist)[labs, labs]
+sor_mat <- sor_mat[rownames(temp_object), colnames(temp_object)]
+
+unique(rownames(temp_object) == rownames(sor_mat)) # ok 
+unique(colnames(temp_object) == colnames(sor_mat)) # ok
+
+mt = mantel(sor_mat,temp_object, method = "spearman")
+mt$statistic
+mt$signif
+
+#### remove same states 
+dist_matrix_no_zero = temp_object
+dist_matrix_no_zero[dist_matrix_no_zero < 1] = 0
+mr = cultevo::mantel.test(dist(sor_mat),dist(dist_matrix_no_zero), omitzerodistances = TRUE, trials = 999)
+mr
+
+
+#### plot the mantel tests 
+df <- data.frame(
+  phy = as.vector(dist_matrix_no_zero),
+  micro = as.vector(dist(sor_mat))
+)
+
+ggplot(df, aes(x = phy, y = micro)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  theme_classic() +
+  labs(x = "temp distance", y = "Microbiome distance")
+
+grid.arrange(p1, p2, ncol = 2)
+####################
+#   rain distance  #
+####################
+sor_mat <- as.matrix(sor_dist)[labs, labs]
+sor_mat <- sor_mat[rownames(rain_object), colnames(rain_object)]
+
+unique(rownames(rain_object) == rownames(sor_mat)) # ok 
+unique(colnames(rain_object) == colnames(sor_mat)) # ok
+
+mt = mantel(sor_mat,rain_object, method = "spearman")
+mt$statistic
+mt$signif
+
+dist_object_no_zero = dist_object
+mt = cultevo::mantel.test(dist(sor_mat),dist(dist_object_no_zero), omitzerodistances = TRUE, trials = 999)
+mr
+
+
+#### plot the mantel tests 
+# Convert to long data frames for plotting
+df_with_zeros <- data.frame(
+  x = as.vector(dist_object),
+  y = as.vector(sor_dist)
+)
+
+df_no_zeros <- data.frame(
+  x = as.vector(dist_object_no_zero),
+  y = as.vector(sor_dist)
+)
+df_no_zeros <- df_no_zeros[df_no_zeros$x > 0,]
+
+# Plot with zeros
+p1 <- ggplot(df_with_zeros, aes(x = x, y = y)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", col = "blue") +
+  labs(
+    x = "rain distance",
+    y = "Microbiome distance")+
+  theme_minimal()
+
+# Plot without zeros
+p2 <- ggplot(df_no_zeros, aes(x = x, y = y)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", col = "red") +
+  labs(
+    x = "rain distance no same state compairsons",
+    y = "Microbiome distance"
+  ) +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+
+####################
+# Physical distance#
+####################
+sor_mat <- as.matrix(sor_dist)[labs, labs]
+sor_mat <- sor_mat[rownames(dist_object), colnames(dist_object)]
+
+unique(rownames(dist_object) == rownames(sor_mat)) # ok 
+unique(colnames(dist_object) == colnames(sor_mat)) # ok
+
+mt = mantel(sor_mat,dist_object, method = "spearman")
+mt$statistic
+mt$signif
+
+dist_object_no_zero = dist_object
+mt = cultevo::mantel.test(dist(sor_mat),dist(dist_object_no_zero), omitzerodistances = TRUE, trials = 999)
+mr
+
+
+#### plot the mantel tests 
+# Convert to long data frames for plotting
+df_with_zeros <- data.frame(
+  x = as.vector(dist_object),
+  y = as.vector(sor_dist)
+)
+
+df_no_zeros <- data.frame(
+  x = as.vector(dist_object_no_zero),
+  y = as.vector(sor_dist)
+)
+df_no_zeros <- df_no_zeros[df_no_zeros$x > 0,]
+
+# Plot with zeros
+p1 <- ggplot(df_with_zeros, aes(x = x, y = y)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", col = "blue") +
+  labs(
+    x = "physical distance",
+    y = "Microbiome distance")+
+  theme_minimal()
+
+# Plot without zeros
+p2 <- ggplot(df_no_zeros, aes(x = x, y = y)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", col = "red") +
+  labs(
+    x = "physical distance no same state compairsons",
+    y = "Microbiome distance"
+  ) +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+#### Plot the tanglegram with the expanded tree --------------------------------
+note: this phylosymbosis
+```{r}
+hc <- hclust(sor_dist, method = "average")
+tree <- as.phylo(hc)
+
+plot(tree,
+     tip.color = tip_colors,
+     cex = 0.6,
+     no.margin = TRUE,
+     #x.lim = c(0, max(node.depth.edgelength(tree)) * 0.1))
+     use.edge.length = FALSE)
+
+
+assoc <- as.matrix(data.frame(
+  V1 = as.character(gps$labtracking),   # labels for tree_exp (tree1)
+  V2 = as.character(gps$labtracking),   # labels for tree   (tree2)
+  stringsAsFactors = FALSE
+))
+
+# 3) build link color vector from your state/colors (must be same length as nrow(assoc))
+gps$link_cols <- habitat_colors[ match(gps$land_use, names(habitat_colors)) ]
+link_cols <- as.character(gps$link_cols[ match(assoc[,1], gps$labtracking) ])
+
+tree2 <- tree
+tree2$edge.length <- NULL
+
+### reate cophylo - object for tanglegram --------------------------------------
+cophylo_obj <- cophylo(tree2, phy_tree,assoc)
+
+plot(cophylo_obj,
+     type = "phylogram",
+     link.type = "curved",
+     link.lty = "solid",
+     link.lwd = 1.5,
+     link.col = link_cols,
+     ftype = "off",
+     #cex = 0.6,
+     mar = c(0.1, 0.1, 0.1, 0.1))
+
+# assuming state_colors is defined as you pasted
+df_legend <- data.frame(state = names(habitat_colors), color = unname(habitat_colors))
+df_legend$state <- factor(df_legend$state, levels = names(habitat_colors))
+
+ggplot(df_legend, aes(x = 1, y = state, fill = state)) +
+  geom_tile(color = "white", height = 0.9, width = 0.6) +
+  scale_fill_manual(values = habitat_colors) +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  theme_minimal(base_size = 10) +
+  theme(axis.title = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "none") +
+  labs(title = "habitat color legend")
+```
+
+```{r}
+library(mapdata) 
+
+smoll_map <- gps[,c("decimalLatitude", "decimalLongitude")]
+smoll_map$decimalLatitude <- as.numeric(smoll_map$decimalLatitude)
+smoll_map$decimalLongitude <- as.numeric(smoll_map$decimalLongitude)
+smoll_map$link_cols <- as.factor(gps$link_cols)
+
+# Create a palette
+palette <- rainbow(length(levels(smoll_map$link_cols)))
+
+# Map colors in tip order
+tip_colors <- palette[as.numeric(smoll_map$link_cols[match(tree_clado$tip.label, gps$SampleID)])]
+
+tree_clado <- tree
+tree_clado$edge.length <- rep(1, length(tree$edge.length))
+
+phymap <- phylo.to.map(
+  tree_clado,
+  smoll_map,
+  plot = FALSE,
+  database="worldHires",regions="USA",
+  
+)
+
+plot(phymap,
+     ftype="off",
+     fsize=0.8, 
+  lty="solid",
+  map.bg="grey",
+  colors=tip_colors,
+  xlim=c(-130, -65),
+     ylim=c(24, 50))
+
+```
+
+this is based on an aggregated speices otu table
+___________________________________________________________________________
+```{r}
+Taxtab<-read_qza("data/microbiome/taxonomy.qza")$data %>% parse_taxonomy()
+
+### Let's try aggrergating to species ---------------------
+Taxtab$lowest_taxon <- apply(Taxtab, 1, function(x) tail(na.omit(x), 1))
+otu_by_taxon <- as.data.frame(asv_table)
+otu_by_taxon$taxon <- Taxtab[rownames(asv_table), "lowest_taxon"]
+otu_by_taxon <- aggregate(. ~ taxon, data = otu_by_taxon, sum)
+otu_by_taxon <- otu_by_taxon %>%
+  column_to_rownames(var = "taxon")
+nrow(otu_by_taxon) # ok
+unique(colnames(otu_by_taxon) == gps$labtracking) # ok
+otu_by_taxon = as.data.frame(otu_by_taxon)
+
+summary(rownames(otu_by_taxon))
+```
+
+```{r}
+### repeat tests
+bc_dist_tax  <- vegdist(t(otu_by_taxon), method = "bray") 
+sor_dist_tax  <- vegdist(t(otu_by_taxon), method = "bray", binary = TRUE) 
+
+##### Mantel tests 
+labs <- attr(bc_dist_tax, "Labels")
+bc_mat <- as.matrix(bc_dist_tax)[labs, labs]
+bc_mat <- bc_mat[rownames(dist_object), colnames(dist_object)]
+
+sor_mat <- as.matrix(sor_dist_tax)[labs, labs]
+sor_mat <- sor_mat[rownames(dist_object), colnames(dist_object)]
+
+unique(rownames(dist_object) == rownames(sor_mat)) # ok 
+unique(colnames(dist_object) == colnames(sor_mat)) # ok
+
+mt_tax = mantel(sor_mat,dist_object, method = "spearman")
+mt_tax$statistic
+mt_tax$signif
+
+#### remove same species 
+dist_matrix_no_zero = dist_object
+dist_matrix_no_zero[dist_matrix_no_zero < 1] = 0
+mr = cultevo::mantel.test(dist(sor_mat),dist(dist_matrix_no_zero), omitzerodistances = TRUE, trials = 999)
+mr
+
+#### plot the mantel tests 
+df <- data.frame(
+  phy = as.vector(dist_matrix_no_zero),
+  micro = as.vector(dist(sor_mat))
+)
+
+ggplot(df, aes(x = phy, y = micro)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  theme_classic() +
+  labs(x = "Physical distance", y = "Microbiome distance")
+```
+
+codiversity attempt 
+```{r}
+#---------------------------
+# Import data
+#---------------------------
+physeq <- qza_to_phyloseq(
+  features  = "data/microbiome/rarefied-table.qza",
+  tree      = "data/microbiome/rooted-tree.qza",
+  taxonomy  = "data/microbiome/taxonomy.qza",
+  metadata  = "MicrobiotaProcess_sample_data.tsv"
+)
+
+#---------------------------
+# Sample filtering
+#---------------------------
+ps <- physeq %>%
+  ps_filter(scientificName == "Peromyscus maniculatus") %>%
+  ps_filter(stateProvince != "Arizona")
+
+sample_names(ps) <- sample_data(ps)$labtracking
+
+#---------------------------
+# Taxonomic aggregation
+#---------------------------
+ps_Family <- tax_glom(ps, taxrank = "Genus", NArm = TRUE)
+
+#---------------------------
+# Clean taxa & samples
+#---------------------------
+ps_clean <- ps_Family %>%
+  prune_taxa(taxa_sums(.) > 0, .) %>%
+  prune_samples(sample_sums(.) > 0, .)
+
+taxa_names(ps_clean) <- make.unique(taxa_names(ps_clean))
+
+
+#---------------------------
+# Prevalence filtering (≥5%)
+#---------------------------
+asv_mat <- as(otu_table(ps_clean), "matrix")
+prev <- rowSums(asv_mat > 0)
+keep <- prev >= 0.05 * ncol(asv_mat)
+ps_clean <- prune_taxa(keep, ps_clean)
+
+#---------------------------
+# Split asvs by Phylum
+#---------------------------
+#tax_df <- as(tax_table(ps_clean), "matrix") %>%
+#  as.data.frame() %>%
+#  rownames_to_column("asv") %>%
+#  select(asv, Phylum)
+
+#asv_by_phylum <- split(tax_df$asv, tax_df$Phylum)
+
+#---------------------------
+# Split asvs by Family
+#---------------------------
+tax_df <- as(tax_table(ps_clean), "matrix") %>%
+  as.data.frame() %>%
+  rownames_to_column("asv") %>%
+  select(asv, Family)
+
+asv_by_Family <- split(tax_df$asv, tax_df$Family)
+
+#---------------------------
+# Build Left Trees (per phylum)
+#---------------------------
+#scale_left <- 1.5
+
+#left_tree_plot_df <- map_dfr(names(asv_by_phylum), function(ph) {
+#  asvs <- asv_by_phylum[[ph]]
+#  ps_sub <- prune_taxa(asvs, ps_clean)
+  
+#  if (ntaxa(ps_sub) < 2) return(NULL) # skip empty / singleton trees
+  
+#  p <- ggtree(phy_tree(ps_sub)) + theme_tree2()
+  
+#  p$data %>%
+#    mutate(
+#      Phylum = ph,
+#      x = x * scale_left  # scale left tree
+#    )
+#})
+
+
+# Only keep phyla with trees
+#valid_phyla <- unique(left_tree_plot_df$Phylum)
+
+#left_tree_plot_df <- left_tree_plot_df %>%
+#  filter(Family %in% valid_phyla)
+
+#left_tip_df <- left_tree_plot_df %>%
+#  filter(isTip) %>%
+#  transmute(
+#    asv = label,
+#    x_left = x,
+#    y_left = y,
+#    Phylum
+#  )
+
+
+#---------------------------
+# Build Left Trees (per Family)
+#---------------------------
+scale_left <- 1.5
+
+left_tree_plot_df <- purrr::map_dfr(names(asv_by_Family), function(gen) {
+  asvs <- asv_by_Family[[gen]]
+  ps_sub <- prune_taxa(asvs, ps_clean)
+
+  if (ntaxa(ps_sub) < 2) return(NULL)
+
+  p <- ggtree(phy_tree(ps_sub)) + theme_tree2()
+
+  p$data %>%
+    mutate(
+      Family = gen,
+      x = x * scale_left
+    )
+})
+
+valid_genera <- unique(left_tree_plot_df$Family)
+
+left_tree_plot_df <- left_tree_plot_df %>%
+  filter(Family %in% valid_genera)
+
+left_tip_df <- left_tree_plot_df %>%
+  filter(isTip) %>%
+  transmute(
+    asv = label,
+    x_left = x,
+    y_left = y,
+    Family
+  )
+
+
+#---------------------------
+# Build Right Tree (all samples)
+#---------------------------
+scale_right <- 1.0 # right tree width
+
+p_right <- ggtree(phy_tree) +
+  scale_x_reverse() +
+  theme_tree2()
+
+right_df <- p_right$data %>%
+  filter(isTip) %>%
+  transmute(
+    labtracking = label,
+    x_right = x,
+    y_right = y
+  )
+
+right_tree_df <- p_right$data
+max_x <- max(right_tree_df$x, na.rm = TRUE)
+# flip tips to face left
+right_tree_df <- right_tree_df %>%
+  mutate(
+    x = max(x, na.rm = TRUE) - x # mirror
+  )
+
+# normalize and scale
+right_tree_df <- right_tree_df %>%
+  mutate(
+    x = (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)),
+    x = x * scale_right
+  )
+
+right_tip_df <- right_tree_df %>%
+  filter(isTip) %>%
+  transmute(
+    labtracking = label,
+    x_base = x,
+    y_base = y
+  )
+
+#---------------------------
+# Shift right trees per phylum
+#---------------------------
+#max_left_x_df <- left_tree_plot_df %>%
+#  group_by(Phylum) %>%
+#  summarize(max_left_x = max(x, na.rm = TRUE), .groups = "drop")
+
+# replicate right tree for each valid phylum
+#right_tree_df <- right_tree_df %>%
+#  crossing(v = valid_phyla) %>%
+#  left_join(max_left_x_df, by = "Phylum") %>%
+#  mutate(x = x + max_left_x + 1) # shift right tree after left tree
+
+#right_tip_df <- right_tip_df %>%
+#  crossing(Phylum = valid_phyla) %>%
+#  left_join(max_left_x_df, by = "Phylum") %>%
+#  mutate(x_right = x_base + max_left_x + 1,
+#         y_right = y_base) %>%
+#  select(labtracking, x_right, y_right, Phylum)
+
+#---------------------------
+# Shift right trees per Family
+#---------------------------
+max_left_x_df <- left_tree_plot_df %>%
+  group_by(Family) %>%
+  summarize(max_left_x = max(x, na.rm = TRUE), .groups = "drop")
+
+right_tree_df <- right_tree_df %>%
+  crossing(Family = valid_genera) %>%
+  left_join(max_left_x_df, by = "Family") %>%
+  mutate(x = x + max_left_x + 1)
+
+right_tip_df <- right_tip_df %>%
+  crossing(Family = valid_genera) %>%
+  left_join(max_left_x_df, by = "Family") %>%
+  mutate(
+    x_right = x_base + max_left_x + 1,
+    y_right = y_base
+  ) %>%
+  select(labtracking, x_right, y_right, Family)
+
+#---------------------------
+# Build links
+#---------------------------
+asv_mat <- as(otu_table(ps_clean), "matrix")
+
+links <- asv_mat %>%
+  as.data.frame() %>%
+  rownames_to_column("asv") %>%
+  pivot_longer(
+    -asv,
+    names_to = "labtracking",
+    values_to = "Abundance"
+  ) %>%
+  filter(Abundance > 0) %>%
+  left_join(tax_df, by = "asv") %>%
+  filter(Family %in% valid_genera) %>% # only valid phyla
+  left_join(as(sample_data(ps_clean), "data.frame"), by = "labtracking") %>%
+  mutate(
+    w = scales::rescale(log10(Abundance + 1), c(0.2, 1))
+  )
+
+links_plot <- links %>%
+  left_join(left_tip_df,  by = c("asv", "Family")) %>%
+  left_join(right_tip_df, by = c("labtracking", "Family")) %>%
+  filter(
+    !is.na(x_left) & !is.na(y_left) &
+    !is.na(x_right) & !is.na(y_right)
+  ) %>%
+  mutate(
+    x_right = ifelse(x_left == x_right, x_right + 1e-6, x_right),
+    y_right = ifelse(y_left == y_right, y_right + 1e-6, y_right)
+  )
+
+
+
+#---------------------------
+# Plot
+#---------------------------
+ggplot() +
+  # LEFT trees
+  geom_tree(
+    data = left_tree_plot_df,
+    aes(x = x, y = y),
+    inherit.aes = FALSE
+  ) +
+  # RIGHT trees
+  geom_tree(
+    data = right_tree_df,
+    aes(x = x, y = y),
+    inherit.aes = FALSE
+  ) +
+  # LINKS
+  geom_curve(
+    data = links_plot,
+    aes(
+      x = x_left,
+      y = y_left,
+      xend = x_right,
+      yend = y_right,
+      color = land_use_location,
+      linewidth = w
+    ),
+    curvature = 0.1,
+    alpha = 0.3
+  ) +
+  scale_color_brewer(palette = "Set2", name = "Habitat") +
+  scale_linewidth(range = c(0.2, 1), guide = "none") +
+  facet_wrap(~Family, scales = "free_y") +
+  theme_void() +
+  coord_cartesian(clip = "off")
+
+```
+
+
+```{r}
+phyla <- unique(as.character(tax_table(ps_clean)[, "Phylum"]))
+
+phylum.sum = tapply(taxa_sums(ps_clean), tax_table(ps_clean)[, "Phylum"], sum, na.rm=TRUE)
+top5phyla = names(sort(phylum.sum, TRUE))[1:9]
+ps_clean = prune_taxa((tax_table(ps_clean)[, "Phylum"] %in% top5phyla), ps_clean)
+
+GP.ord <- ordinate(ps_clean, "PCoA", "bray")
+p1 = plot_ordination(ps_clean, GP.ord, type="taxa", color="Phylum", title="taxa")
+print(p1)
+
+p1 + facet_wrap(~Phylum, 3)
+
+```
+
+```{r}
+#Step 1: Get all phyla
+phyla <- unique(tax_table(ps)[, "Phylum"])
+
+# Step 2: Prepare lists
+pcoa_list <- list()
+axis_labels <- data.frame()
+
+for (ph in phyla) {
+  
+  # Subset by phylum
+  ps_sub <- subset_taxa(ps, Phylum == ph)
+  
+  # Remove samples with zero counts
+  ps_sub <- prune_samples(sample_sums(ps_sub) > 0, ps_sub)
+  
+  # Skip if fewer than 2 samples
+  if (nsamples(ps_sub) < 2) next
+  
+  # Distance matrix
+  dist_mat <- phyloseq::distance(ps_sub, method = "bray")
+  if (any(is.na(dist_mat)) || any(is.infinite(dist_mat))) next
+  
+  # PCoA
+  pcoa_res <- ape::pcoa(dist_mat)
+  
+  # Percent variance
+  var_exp <- round(100 * pcoa_res$values$Relative_eig[1:2], 1)
+  
+  # Sample data
+  sample_df <- data.frame(sample_data(ps_sub))
+  
+  # PCoA dataframe
+  pcoa_df <- data.frame(
+    Sample = rownames(sample_df),
+    PC1 = pcoa_res$vectors[,1],
+    PC2 = pcoa_res$vectors[,2],
+    Habitat = sample_df$land_use,
+    Region = sample_df$Region,
+    Phylum = ph
+  )
+  
+  # Store title with phylum + PC labels
+  axis_labels <- rbind(axis_labels,
+                       data.frame(
+                         Phylum = ph,
+                         title = paste0(ph, "\nPC1 (", var_exp[1], "%) | PC2 (", var_exp[2], "%)")
+                       ))
+  
+  # Add to list
+  pcoa_list[[ph]] <- pcoa_df
+}
+
+# Combine all phyla
+combined_pcoa <- bind_rows(pcoa_list)
+
+# Join titles
+combined_pcoa <- combined_pcoa %>%
+  left_join(axis_labels, by = "Phylum")
+
+# Step 3: Plot
+ggplot(combined_pcoa, aes(x = PC1, y = PC2, color = Habitat, shape = Region)) +
+  geom_point(size = 3, alpha = 0.8) +
+  stat_ellipse(aes(group = interaction(Habitat, Region)), level = 0.95, linetype = 2) +
+  facet_wrap(~title, scales = "free") +  # facet titles = Phylum + PC labels
+  theme_bw() +
+  scale_color_manual(values = habitat_colors) +
+  theme(strip.text = element_text(face = "bold", size = 12)) +
+  labs(x = "PC1", y = "PC2")
+
+```
+
