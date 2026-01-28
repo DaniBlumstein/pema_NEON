@@ -61,6 +61,7 @@ suppressPackageStartupMessages({
 })
 ```
 
+colors
 ```{r}
 habitat_colors <- c(
   # East of Mississippi (cool / forested)
@@ -76,11 +77,12 @@ habitat_colors <- c(
   
 east_west_colors <- c(
   "east" = "#6B8FB3",  # muted steel blue
-  "west" = "#B07C59"   # muted warm tan
+  "west" = "#D55E00"   # muted warm tan
 )
 
 ```
 
+MicrobiotaProcess
 ```{r}
 mpse_samples <- mp_import_qiime2(otuqza="data/microbiome/rarefied-table.qza", 
                           taxaqza="data/microbiome/taxonomy.qza", 
@@ -252,7 +254,7 @@ p2 <- mpse_samples_filtered %>%
       mp_plot_rarecurve(
          .rare = RareAbundanceRarecurve, 
          .alpha = Observe, 
-         .group = land_use_location)
+         .group = Region)
       #) +
       #scale_color_manual(values=c("#00A087FF", "#3C5488FF")) +
       #scale_fill_manual(values=c("#00A087FF", "#3C5488FF"), guide="none")
@@ -262,7 +264,7 @@ p3 <- mpse_samples_filtered %>%
       mp_plot_rarecurve(
          .rare = RareAbundanceRarecurve, 
          .alpha = "Observe", 
-         .group = land_use_location, 
+         .group = Region, 
          plot.group = TRUE)
       #) +
        #scale_color_manual(values=c("#00A087FF", "#3C5488FF")) +
@@ -280,7 +282,7 @@ mpse_samples_filtered %<>%
 
 f1 <- mpse_samples_filtered %>% 
       mp_plot_alpha(
-        .group=land_use_location, 
+        .group=Region, 
         .alpha=c(Observe, Chao1, ACE, Shannon, Simpson, Pielou))
       #) +
       #scale_fill_manual(values=c("#00A087FF", "#3C5488FF"), guide="none") +
@@ -302,14 +304,14 @@ mpse_samples_filtered %<>%
     ) %>%
     mp_cal_abundance( # for each groups 
       .abundance=RareAbundance,
-      .group=land_use_location
+      .group=Region
     )
 
 # visualize the relative abundance of top 20 phyla for each sample.
 p1 <- mpse_samples_filtered %>%
          mp_plot_abundance(
            .abundance=RareAbundance,
-           .group=land_use_location, 
+           .group=Region, 
            taxa.class = Phylum, 
            topn = 20,
            relative = TRUE
@@ -318,7 +320,7 @@ p1 <- mpse_samples_filtered %>%
 p2 <- mpse_samples_filtered %>%
           mp_plot_abundance(
             .abundance=RareAbundance,
-            .group=land_use_location,
+            .group=Region,
             taxa.class = Phylum,
             topn = 20,
             relative = FALSE
@@ -330,7 +332,7 @@ p2
 h1 <- mpse_samples_filtered %>%
          mp_plot_abundance(
            .abundance = RareAbundance,
-           .group = land_use_location,
+           .group = Region,
            taxa.class = Phylum,
            relative = TRUE,
            topn = 20,
@@ -344,7 +346,7 @@ h1 <- mpse_samples_filtered %>%
 h2 <- mpse_samples_filtered %>%
           mp_plot_abundance(
             .abundance = RareAbundance,
-            .group = land_use_location,
+            .group = Region,
             taxa.class = Phylum,
             relative = FALSE,
             topn = 20,
@@ -364,7 +366,7 @@ h2
 p3 <- mpse_samples_filtered %>%
          mp_plot_abundance(
             .abundance=RareAbundance, 
-            .group=land_use_location,
+            .group=Region,
             taxa.class = Phylum,
             topn = 20,
             plot.group = TRUE
@@ -374,7 +376,7 @@ p3 <- mpse_samples_filtered %>%
 p4 <- mpse_samples_filtered %>%
           mp_plot_abundance(
              .abundance=RareAbundance,
-             .group= land_use_location,
+             .group= Region,
              taxa.class = Phylum,
              topn = 20,
              relative = FALSE,
@@ -391,39 +393,20 @@ mpse_samples_filtered %<>%
 
 mpse_samples_filtered %<>% mp_cal_dist(.abundance=hellinger, distmethod="bray")
 
-# when .group is provided, the dot heatmap plot with group information will be return.
-
-p2 <- mpse_samples_filtered %>% mp_plot_dist(.distmethod = bray, .group = land_use_location)
+p2 <- mpse_samples_filtered %>% mp_plot_dist(.distmethod = bray, .group = Region)
 p2
-# The scale or theme of dot heatmap plot can be adjusted using set_scale_theme function.
-#p2 %>% set_scale_theme(
-#          x = scale_fill_manual(
-#                 values=c("orange", "deepskyblue"), 
-#                 guide = guide_legend(
-#                             keywidth = 1, 
-#                             keyheight = 0.5, 
-#                             title.theme = element_text(size=8),
-#                             label.theme = element_text(size=6)
-#                 )
-#              ), 
-#          aes_var = land_use_location # specific the name of variable 
-#       ) %>%
-#       set_scale_theme(
-#          x = scale_color_gradient(
-#                 guide = guide_legend(keywidth = 0.5, keyheight = 0.5)
-#              ),
-#         aes_var = bray
-#      ) %>%
-#       set_scale_theme(
-#          x = scale_size_continuous(
-#                 range = c(0.1, 3),
-#                 guide = guide_legend(keywidth = 0.5, keyheight = 0.5)
-#              ),
-#          aes_var = bray
-#       )
 
-p3 <- mpse_samples_filtered %>% mp_plot_dist(.distmethod = bray, .group = land_use_location, group.test=T, textsize=2)
-p3 
+p3 <- mpse_samples_filtered %>% mp_plot_dist(.distmethod = bray, .group = Region, group.test=T, textsize=2) +
+  scale_fill_manual(values = c(
+    "#6B8FB3",
+    "#A0775A",
+    "#D55E00" ))+
+  scale_color_manual(values = c(
+    "#6B8FB3",
+    "#A0775A",
+    "#D55E00" ))
+
+ p3 
 ```
 
 pcoa
@@ -433,11 +416,11 @@ mpse_samples_filtered %<>%
 
 #perform adonis or anosim to check whether it is significant to the dissimilarities of groups.
 mpse_samples_filtered %<>%
-     mp_adonis(.abundance=hellinger, .formula=~Mississippi_River_Label, distmethod="bray", permutations=9999, action="add")
+     mp_adonis(.abundance=hellinger, .formula=~Region, distmethod="bray", permutations=9999, action="add")
 
-mpse_samples_filtered$Mississippi_River_Label <- 
+mpse_samples_filtered$Region <- 
   factor(
-    mpse_samples_filtered$Mississippi_River_Label,
+    mpse_samples_filtered$Region,
     levels = c("east", "west")
   )
 
@@ -446,21 +429,21 @@ mpse_samples_filtered %>% mp_extract_internal_attr(name=adonis)
 p1 <- mpse_samples_filtered %>%
         mp_plot_ord(
           .ord = pcoa, 
-          .group = land_use, 
-          .color = land_use, 
-          .starshape = Mississippi_River_Label,
+          .group = Region, 
+          .color = Region, 
+          .starshape = Region,
           .size = 1.2,
           .alpha = 1,
           ellipse = TRUE,
           show.legend = F # don't display the legend of stat_ellipse
         )+   # land-use colors (primary)
   scale_color_manual(
-    name   = "Locataion",
-    values = habitat_colors
+    name   = "Region",
+    values = east_west_colors
   ) +
   scale_fill_manual(
-    name   = "Land use",
-    values = habitat_colors
+    name   = "Region",
+    values = east_west_colors
   ) 
 
 p1
@@ -470,21 +453,21 @@ p1
 p2 <- mpse_samples_filtered %>% 
         mp_plot_ord(
           .ord = pcoa, 
-          .group = land_use, 
-          .color = land_use, 
+          .group = Region, 
+          .color = Region, 
           .size = Observe, 
           .alpha = Shannon,
-          .starshape = Mississippi_River_Label,
+          .starshape = Region,
           ellipse = TRUE,
           show.legend = FALSE # don't display the legend of stat_ellipse 
         ) +
         scale_color_manual(
-    name   = "Locataion",
-    values = habitat_colors
+    name   = "Region",
+    values = east_west_colors
   ) +
   scale_fill_manual(
-    name   = "Land use",
-    values = habitat_colors
+    name   = "Region",
+    values = east_west_colors
   ) +
         scale_size_continuous(
           range=c(0.5, 3),
@@ -498,36 +481,9 @@ below this is whole microbiome community
 ___________________________________________________________________________
 physical distance matrix using GPS
 ```{r}
-gps <- as.data.frame(mpse_samples_filtered@colData)[, c("labtracking","stateProvince","land_use","decimalLatitude","decimalLongitude","rain","temp","Mississippi_River_Label")]
+gps <- as.data.frame(mpse_samples_filtered@colData)[, c("labtracking","stateProvince","land_use","decimalLatitude","decimalLongitude","rain","temp","Region")]
 
 locations <- unique(gps$stateProvince)
-
-####################
-#   rain distance  #
-####################
-rain_dist <- dist(gps$rain)
-# Set row/column names
-rownames(rain_dist) <- gps$labtracking
-colnames(rain_dist) <- gps$labtracking
-rain_object <- as.dist(rain_dist)
-# Perform hierarchical clustering 
-rain_tree <- hclust(rain_object, method = "complete") 
-# Plot the dendrogram
-plot(rain_tree, main = "Rain Clustering Dendrogram")
-
-####################
-#   Temp distance  #
-####################
-temp_dist <- dist(gps$temp)
-# Set row/column names
-rownames(temp_dist) <- gps$labtracking
-colnames(temp_dist) <- gps$labtracking
-temp_object <- as.dist(temp_dist)
-# Perform hierarchical clustering 
-temp_tree <- hclust(temp_object, method = "complete") 
-# Plot the dendrogram
-plot(temp_tree, main = "Temp Clustering Dendrogram")
-
 
 ####################
 # Physical distance#
@@ -585,17 +541,17 @@ plot(expanded_tree)
 tip_index <- match(expanded_tree$tip.label, gps$labtracking)
 
 # Get habitats for all tips (NA if no match)
-tip_habitats <- as.character(gps$land_use[tip_index])
+tip_habitats <- as.character(gps$Region[tip_index])
 
 # Look up colors in habitat_colors
-tip_colors <- habitat_colors[tip_habitats]
+tip_colors <- east_west_colors[tip_habitats]
 
 # Replace any missing colors with black
 tip_colors[is.na(tip_colors)] <- "black"
 
 #build tip color vector from your state/colors (must be same length as nrow(assoc))
-gps$tip_colors <- habitat_colors[
-  match(gps$land_use, names(habitat_colors))
+gps$tip_colors <- east_west_colors[
+  match(gps$land_use, names(east_west_colors))
 ]
 names(gps$tip_colors) <- gps$labtracking
 
@@ -611,97 +567,13 @@ plot(phy_tree,
 ```
 
 mantel test
+DB need to readjust the distance decay to include the east west divide not just distance
 ```{r}
 bc_dist   <- vegdist(t(asv_table), method = "bray") 
 sor_dist  <- vegdist(t(asv_table), method = "bray", binary = TRUE) 
 
 labs <- attr(bc_dist, "Labels")
 bc_mat <- as.matrix(bc_dist)[labs, labs]
-
-####################
-#   temp distance  #
-####################
-sor_mat <- as.matrix(sor_dist)[labs, labs]
-sor_mat <- sor_mat[rownames(temp_object), colnames(temp_object)]
-
-unique(rownames(temp_object) == rownames(sor_mat)) # ok 
-unique(colnames(temp_object) == colnames(sor_mat)) # ok
-
-mt = mantel(sor_mat,temp_object, method = "spearman")
-mt$statistic
-mt$signif
-
-#### remove same states 
-dist_matrix_no_zero = temp_object
-dist_matrix_no_zero[dist_matrix_no_zero < 1] = 0
-mr = cultevo::mantel.test(dist(sor_mat),dist(dist_matrix_no_zero), omitzerodistances = TRUE, trials = 999)
-mr
-
-
-#### plot the mantel tests 
-df <- data.frame(
-  phy = as.vector(dist_matrix_no_zero),
-  micro = as.vector(dist(sor_mat))
-)
-
-ggplot(df, aes(x = phy, y = micro)) +
-  geom_point() +
-  geom_smooth(method = "lm", se = FALSE, color = "red") +
-  theme_classic() +
-  labs(x = "temp distance", y = "Microbiome distance")
-
-grid.arrange(p1, p2, ncol = 2)
-####################
-#   rain distance  #
-####################
-sor_mat <- as.matrix(sor_dist)[labs, labs]
-sor_mat <- sor_mat[rownames(rain_object), colnames(rain_object)]
-
-unique(rownames(rain_object) == rownames(sor_mat)) # ok 
-unique(colnames(rain_object) == colnames(sor_mat)) # ok
-
-mt = mantel(sor_mat,rain_object, method = "spearman")
-mt$statistic
-mt$signif
-
-dist_object_no_zero = dist_object
-mt = cultevo::mantel.test(dist(sor_mat),dist(dist_object_no_zero), omitzerodistances = TRUE, trials = 999)
-mr
-
-
-#### plot the mantel tests 
-# Convert to long data frames for plotting
-df_with_zeros <- data.frame(
-  x = as.vector(dist_object),
-  y = as.vector(sor_dist)
-)
-
-df_no_zeros <- data.frame(
-  x = as.vector(dist_object_no_zero),
-  y = as.vector(sor_dist)
-)
-df_no_zeros <- df_no_zeros[df_no_zeros$x > 0,]
-
-# Plot with zeros
-p1 <- ggplot(df_with_zeros, aes(x = x, y = y)) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", col = "blue") +
-  labs(
-    x = "rain distance",
-    y = "Microbiome distance")+
-  theme_minimal()
-
-# Plot without zeros
-p2 <- ggplot(df_no_zeros, aes(x = x, y = y)) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", col = "red") +
-  labs(
-    x = "rain distance no same state compairsons",
-    y = "Microbiome distance"
-  ) +
-  theme_minimal()
-
-grid.arrange(p1, p2, ncol = 2)
 
 ####################
 # Physical distance#
@@ -718,7 +590,7 @@ mt$signif
 
 dist_object_no_zero = dist_object
 mt = cultevo::mantel.test(dist(sor_mat),dist(dist_object_no_zero), omitzerodistances = TRUE, trials = 999)
-mr
+mt
 
 
 #### plot the mantel tests 
@@ -777,7 +649,7 @@ assoc <- as.matrix(data.frame(
 ))
 
 # 3) build link color vector from your state/colors (must be same length as nrow(assoc))
-gps$link_cols <- habitat_colors[ match(gps$land_use, names(habitat_colors)) ]
+gps$link_cols <- east_west_colors[ match(gps$Region, names(east_west_colors)) ]
 link_cols <- as.character(gps$link_cols[ match(assoc[,1], gps$labtracking) ])
 
 tree2 <- tree
@@ -797,12 +669,12 @@ plot(cophylo_obj,
      mar = c(0.1, 0.1, 0.1, 0.1))
 
 # assuming state_colors is defined as you pasted
-df_legend <- data.frame(state = names(habitat_colors), color = unname(habitat_colors))
-df_legend$state <- factor(df_legend$state, levels = names(habitat_colors))
+df_legend <- data.frame(Region = names(east_west_colors), color = unname(east_west_colors))
+df_legend$Region <- factor(df_legend$Region, levels = names(east_west_colors))
 
-ggplot(df_legend, aes(x = 1, y = state, fill = state)) +
+ggplot(df_legend, aes(x = 1, y = Region, fill = Region)) +
   geom_tile(color = "white", height = 0.9, width = 0.6) +
-  scale_fill_manual(values = habitat_colors) +
+  scale_fill_manual(values = east_west_colors) +
   scale_x_continuous(expand = c(0, 0)) +
   scale_y_discrete(expand = c(0, 0)) +
   theme_minimal(base_size = 10) +
@@ -811,7 +683,7 @@ ggplot(df_legend, aes(x = 1, y = state, fill = state)) +
         axis.ticks = element_blank(),
         panel.grid = element_blank(),
         legend.position = "none") +
-  labs(title = "habitat color legend")
+  labs(title = "Region")
 ```
 
 ```{r}
@@ -826,9 +698,9 @@ smoll_map$link_cols <- as.factor(gps$link_cols)
 palette <- rainbow(length(levels(smoll_map$link_cols)))
 
 # Map colors in tip order
+tree_clado <- tree
 tip_colors <- palette[as.numeric(smoll_map$link_cols[match(tree_clado$tip.label, gps$SampleID)])]
 
-tree_clado <- tree
 tree_clado$edge.length <- rep(1, length(tree$edge.length))
 
 phymap <- phylo.to.map(
@@ -869,44 +741,6 @@ otu_by_taxon = as.data.frame(otu_by_taxon)
 summary(rownames(otu_by_taxon))
 ```
 
-```{r}
-### repeat tests
-bc_dist_tax  <- vegdist(t(otu_by_taxon), method = "bray") 
-sor_dist_tax  <- vegdist(t(otu_by_taxon), method = "bray", binary = TRUE) 
-
-##### Mantel tests 
-labs <- attr(bc_dist_tax, "Labels")
-bc_mat <- as.matrix(bc_dist_tax)[labs, labs]
-bc_mat <- bc_mat[rownames(dist_object), colnames(dist_object)]
-
-sor_mat <- as.matrix(sor_dist_tax)[labs, labs]
-sor_mat <- sor_mat[rownames(dist_object), colnames(dist_object)]
-
-unique(rownames(dist_object) == rownames(sor_mat)) # ok 
-unique(colnames(dist_object) == colnames(sor_mat)) # ok
-
-mt_tax = mantel(sor_mat,dist_object, method = "spearman")
-mt_tax$statistic
-mt_tax$signif
-
-#### remove same species 
-dist_matrix_no_zero = dist_object
-dist_matrix_no_zero[dist_matrix_no_zero < 1] = 0
-mr = cultevo::mantel.test(dist(sor_mat),dist(dist_matrix_no_zero), omitzerodistances = TRUE, trials = 999)
-mr
-
-#### plot the mantel tests 
-df <- data.frame(
-  phy = as.vector(dist_matrix_no_zero),
-  micro = as.vector(dist(sor_mat))
-)
-
-ggplot(df, aes(x = phy, y = micro)) +
-  geom_point() +
-  geom_smooth(method = "lm", se = FALSE, color = "red") +
-  theme_classic() +
-  labs(x = "Physical distance", y = "Microbiome distance")
-```
 
 codiversity attempt 
 ```{r}
@@ -955,84 +789,49 @@ ps_clean <- prune_taxa(keep, ps_clean)
 #---------------------------
 # Split asvs by Phylum
 #---------------------------
-#tax_df <- as(tax_table(ps_clean), "matrix") %>%
-#  as.data.frame() %>%
-#  rownames_to_column("asv") %>%
-#  select(asv, Phylum)
+tax_df <- as(tax_table(ps_clean), "matrix") %>%
+  as.data.frame() %>%
+  rownames_to_column("asv") %>%
+  select(asv, Phylum)
 
-#asv_by_phylum <- split(tax_df$asv, tax_df$Phylum)
+asv_by_phylum <- split(tax_df$asv, tax_df$Phylum)
 
 #---------------------------
 # Split asvs by Family
 #---------------------------
-tax_df <- as(tax_table(ps_clean), "matrix") %>%
-  as.data.frame() %>%
-  rownames_to_column("asv") %>%
-  select(asv, Family)
+#tax_df <- as(tax_table(ps_clean), "matrix") %>%
+#  as.data.frame() %>%
+#  rownames_to_column("asv") %>%
+#  select(asv, Family)
 
-asv_by_Family <- split(tax_df$asv, tax_df$Family)
+#asv_by_Family <- split(tax_df$asv, tax_df$Family)
 
 #---------------------------
 # Build Left Trees (per phylum)
 #---------------------------
-#scale_left <- 1.5
-
-#left_tree_plot_df <- map_dfr(names(asv_by_phylum), function(ph) {
-#  asvs <- asv_by_phylum[[ph]]
-#  ps_sub <- prune_taxa(asvs, ps_clean)
-  
-#  if (ntaxa(ps_sub) < 2) return(NULL) # skip empty / singleton trees
-  
-#  p <- ggtree(phy_tree(ps_sub)) + theme_tree2()
-  
-#  p$data %>%
-#    mutate(
-#      Phylum = ph,
-#      x = x * scale_left  # scale left tree
-#    )
-#})
-
-
-# Only keep phyla with trees
-#valid_phyla <- unique(left_tree_plot_df$Phylum)
-
-#left_tree_plot_df <- left_tree_plot_df %>%
-#  filter(Family %in% valid_phyla)
-
-#left_tip_df <- left_tree_plot_df %>%
-#  filter(isTip) %>%
-#  transmute(
-#    asv = label,
-#    x_left = x,
-#    y_left = y,
-#    Phylum
-#  )
-
-
-#---------------------------
-# Build Left Trees (per Family)
-#---------------------------
 scale_left <- 1.5
 
-left_tree_plot_df <- purrr::map_dfr(names(asv_by_Family), function(gen) {
-  asvs <- asv_by_Family[[gen]]
+left_tree_plot_df <- map_dfr(names(asv_by_phylum), function(ph) {
+  asvs <- asv_by_phylum[[ph]]
   ps_sub <- prune_taxa(asvs, ps_clean)
-
-  if (ntaxa(ps_sub) < 2) return(NULL)
-
+  
+  if (ntaxa(ps_sub) < 2) return(NULL) # skip empty / singleton trees
+  
   p <- ggtree(phy_tree(ps_sub)) + theme_tree2()
-
+  
   p$data %>%
     mutate(
-      Family = gen,
-      x = x * scale_left
+      Phylum = ph,
+      x = x * scale_left  # scale left tree
     )
 })
 
-valid_genera <- unique(left_tree_plot_df$Family)
+
+# Only keep phyla with trees
+valid_phyla <- unique(left_tree_plot_df$Phylum)
 
 left_tree_plot_df <- left_tree_plot_df %>%
-  filter(Family %in% valid_genera)
+  filter(Phylum %in% valid_phyla)
 
 left_tip_df <- left_tree_plot_df %>%
   filter(isTip) %>%
@@ -1040,8 +839,43 @@ left_tip_df <- left_tree_plot_df %>%
     asv = label,
     x_left = x,
     y_left = y,
-    Family
+    Phylum
   )
+
+
+#---------------------------
+# Build Left Trees (per Family)
+#---------------------------
+#scale_left <- 1.5
+
+#left_tree_plot_df <- purrr::map_dfr(names(asv_by_Family), function(gen) {
+#  asvs <- asv_by_Family[[gen]]
+#  ps_sub <- prune_taxa(asvs, ps_clean)
+
+#  if (ntaxa(ps_sub) < 2) return(NULL)
+
+#  p <- ggtree(phy_tree(ps_sub)) + theme_tree2()
+
+#  p$data %>%
+#    mutate(
+#      Family = gen,
+#      x = x * scale_left
+#    )
+#})
+
+#valid_genera <- unique(left_tree_plot_df$Family)
+
+#left_tree_plot_df <- left_tree_plot_df %>%
+#  filter(Family %in% valid_genera)
+
+#left_tip_df <- left_tree_plot_df %>%
+#  filter(isTip) %>%
+#  transmute(
+#    asv = label,
+#    x_left = x,
+#    y_left = y,
+#    Family
+#  )
 
 
 #---------------------------
@@ -1087,43 +921,43 @@ right_tip_df <- right_tree_df %>%
 #---------------------------
 # Shift right trees per phylum
 #---------------------------
-#max_left_x_df <- left_tree_plot_df %>%
-#  group_by(Phylum) %>%
-#  summarize(max_left_x = max(x, na.rm = TRUE), .groups = "drop")
+max_left_x_df <- left_tree_plot_df %>%
+  group_by(Phylum) %>%
+  summarize(max_left_x = max(x, na.rm = TRUE), .groups = "drop")
 
 # replicate right tree for each valid phylum
-#right_tree_df <- right_tree_df %>%
-#  crossing(v = valid_phyla) %>%
-#  left_join(max_left_x_df, by = "Phylum") %>%
-#  mutate(x = x + max_left_x + 1) # shift right tree after left tree
+right_tree_df <- right_tree_df %>%
+  crossing(v = valid_phyla) %>%
+  left_join(max_left_x_df, by = "Phylum") %>%
+  mutate(x = x + max_left_x + 1) # shift right tree after left tree
 
-#right_tip_df <- right_tip_df %>%
-#  crossing(Phylum = valid_phyla) %>%
-#  left_join(max_left_x_df, by = "Phylum") %>%
-#  mutate(x_right = x_base + max_left_x + 1,
-#         y_right = y_base) %>%
-#  select(labtracking, x_right, y_right, Phylum)
+right_tip_df <- right_tip_df %>%
+  crossing(Phylum = valid_phyla) %>%
+  left_join(max_left_x_df, by = "Phylum") %>%
+  mutate(x_right = x_base + max_left_x + 1,
+         y_right = y_base) %>%
+  select(labtracking, x_right, y_right, Phylum)
 
 #---------------------------
 # Shift right trees per Family
 #---------------------------
-max_left_x_df <- left_tree_plot_df %>%
-  group_by(Family) %>%
-  summarize(max_left_x = max(x, na.rm = TRUE), .groups = "drop")
+#max_left_x_df <- left_tree_plot_df %>%
+#  group_by(Family) %>%
+#  summarize(max_left_x = max(x, na.rm = TRUE), .groups = "drop")
 
-right_tree_df <- right_tree_df %>%
-  crossing(Family = valid_genera) %>%
-  left_join(max_left_x_df, by = "Family") %>%
-  mutate(x = x + max_left_x + 1)
+#right_tree_df <- right_tree_df %>%
+#  crossing(Family = valid_genera) %>%
+#  left_join(max_left_x_df, by = "Family") %>%
+#  mutate(x = x + max_left_x + 1)
 
-right_tip_df <- right_tip_df %>%
-  crossing(Family = valid_genera) %>%
-  left_join(max_left_x_df, by = "Family") %>%
-  mutate(
-    x_right = x_base + max_left_x + 1,
-    y_right = y_base
-  ) %>%
-  select(labtracking, x_right, y_right, Family)
+#right_tip_df <- right_tip_df %>%
+#  crossing(Family = valid_genera) %>%
+#  left_join(max_left_x_df, by = "Family") %>%
+#  mutate(
+#    x_right = x_base + max_left_x + 1,
+#    y_right = y_base
+#  ) %>%
+#  select(labtracking, x_right, y_right, Family)
 
 #---------------------------
 # Build links
@@ -1140,15 +974,15 @@ links <- asv_mat %>%
   ) %>%
   filter(Abundance > 0) %>%
   left_join(tax_df, by = "asv") %>%
-  filter(Family %in% valid_genera) %>% # only valid phyla
+  filter(Phylum %in% valid_genera) %>% # only valid phyla
   left_join(as(sample_data(ps_clean), "data.frame"), by = "labtracking") %>%
   mutate(
     w = scales::rescale(log10(Abundance + 1), c(0.2, 1))
   )
 
 links_plot <- links %>%
-  left_join(left_tip_df,  by = c("asv", "Family")) %>%
-  left_join(right_tip_df, by = c("labtracking", "Family")) %>%
+  left_join(left_tip_df,  by = c("asv", "Phylum")) %>%
+  left_join(right_tip_df, by = c("labtracking", "Phylum")) %>%
   filter(
     !is.na(x_left) & !is.na(y_left) &
     !is.na(x_right) & !is.na(y_right)
@@ -1184,13 +1018,13 @@ ggplot() +
       y = y_left,
       xend = x_right,
       yend = y_right,
-      color = land_use_location,
+      color = Region,
       linewidth = w
     ),
     curvature = 0.1,
     alpha = 0.3
   ) +
-  scale_color_brewer(palette = "Set2", name = "Habitat") +
+  scale_color_brewer(palette = "Set2", name = "Region") +
   scale_linewidth(range = c(0.2, 1), guide = "none") +
   facet_wrap(~Family, scales = "free_y") +
   theme_void() +
@@ -1200,89 +1034,205 @@ ggplot() +
 
 
 ```{r}
-phyla <- unique(as.character(tax_table(ps_clean)[, "Phylum"]))
+phyla <- unique(as.character(tax_table(ps)[, "Family"]))
 
-phylum.sum = tapply(taxa_sums(ps_clean), tax_table(ps_clean)[, "Phylum"], sum, na.rm=TRUE)
-top5phyla = names(sort(phylum.sum, TRUE))[1:9]
-ps_clean = prune_taxa((tax_table(ps_clean)[, "Phylum"] %in% top5phyla), ps_clean)
+phylum.sum = tapply(taxa_sums(ps), tax_table(ps)[, "Family"], sum, na.rm=TRUE)
+top5phyla = names(sort(phylum.sum, TRUE))[1:20]
+ps_top = prune_taxa((tax_table(ps)[, "Family"] %in% top5phyla), ps)
 
-GP.ord <- ordinate(ps_clean, "PCoA", "bray")
-p1 = plot_ordination(ps_clean, GP.ord, type="taxa", color="Phylum", title="taxa")
+GP.ord <- ordinate(ps_top, "PCoA", "bray")
+p1 = plot_ordination(ps_top, GP.ord, type="taxa", color="Family", title="taxa")
 print(p1)
 
-p1 + facet_wrap(~Phylum, 3)
+p1 + facet_wrap(~Family)
 
 ```
 
 ```{r}
-#Step 1: Get all phyla
-phyla <- unique(tax_table(ps)[, "Phylum"])
+# Step 1: Get all Families 
+families <- unique(as.vector(tax_table(ps_top)[, "Family"]))
+families <- families[!is.na(families)]
+subset_fam <- 
 
-# Step 2: Prepare lists
-pcoa_list <- list()
-axis_labels <- data.frame()
+# Step 2: Prepare containers
+pcoa_list   <- list()
+axis_labels <- list()
 
-for (ph in phyla) {
-  
-  # Subset by phylum
-  ps_sub <- subset_taxa(ps, Phylum == ph)
-  
-  # Remove samples with zero counts
+for (fam in families) {
+
+  # Subset by Family
+  ps_sub <- subset_taxa(ps, Family == fam)
+
+  # Remove empty samples
   ps_sub <- prune_samples(sample_sums(ps_sub) > 0, ps_sub)
-  
-  # Skip if fewer than 2 samples
-  if (nsamples(ps_sub) < 2) next
-  
+
+  # Need >= 3 samples for ellipses + PCoA stability
+  if (nsamples(ps_sub) < 3) next
+
   # Distance matrix
-  dist_mat <- phyloseq::distance(ps_sub, method = "bray")
-  if (any(is.na(dist_mat)) || any(is.infinite(dist_mat))) next
-  
+  dist_mat <- tryCatch(
+    phyloseq::distance(ps_sub, method = "bray"),
+    error = function(e) NULL
+  )
+  if (is.null(dist_mat)) next
+
   # PCoA
-  pcoa_res <- ape::pcoa(dist_mat)
-  
-  # Percent variance
-  var_exp <- round(100 * pcoa_res$values$Relative_eig[1:2], 1)
-  
-  # Sample data
+  pcoa_res <- tryCatch(
+    ape::pcoa(dist_mat),
+    error = function(e) NULL
+  )
+  if (is.null(pcoa_res)) next
+
+  # Variance explained (guard against NA)
+  var_exp <- round(
+    100 * pcoa_res$values$Relative_eig[1:2],
+    1
+  )
+  if (any(is.na(var_exp))) next
+
+  # Sample metadata
   sample_df <- data.frame(sample_data(ps_sub))
-  
+
   # PCoA dataframe
   pcoa_df <- data.frame(
     Sample = rownames(sample_df),
-    PC1 = pcoa_res$vectors[,1],
-    PC2 = pcoa_res$vectors[,2],
-    Habitat = sample_df$land_use,
+    PC1    = pcoa_res$vectors[, 1],
+    PC2    = pcoa_res$vectors[, 2],
     Region = sample_df$Region,
-    Phylum = ph
+    Family = fam
   )
-  
-  # Store title with phylum + PC labels
-  axis_labels <- rbind(axis_labels,
-                       data.frame(
-                         Phylum = ph,
-                         title = paste0(ph, "\nPC1 (", var_exp[1], "%) | PC2 (", var_exp[2], "%)")
-                       ))
-  
-  # Add to list
-  pcoa_list[[ph]] <- pcoa_df
+
+  # Store facet title
+  axis_labels[[fam]] <- data.frame(
+    Family = fam,
+    title  = paste0(
+      fam,
+      "\nPC1 (", var_exp[1], "%) | PC2 (", var_exp[2], "%)"
+    )
+  )
+
+  pcoa_list[[fam]] <- pcoa_df
 }
 
-# Combine all phyla
+# Combine results
 combined_pcoa <- bind_rows(pcoa_list)
+axis_labels   <- bind_rows(axis_labels)
 
-# Join titles
 combined_pcoa <- combined_pcoa %>%
-  left_join(axis_labels, by = "Phylum")
+  left_join(axis_labels, by = "Family") %>%
+  mutate(title = factor(title, levels = unique(title)))
 
 # Step 3: Plot
-ggplot(combined_pcoa, aes(x = PC1, y = PC2, color = Habitat, shape = Region)) +
+ggplot(
+  combined_pcoa,
+  aes(PC1, PC2, color = Region, shape = Region)
+) +
   geom_point(size = 3, alpha = 0.8) +
-  stat_ellipse(aes(group = interaction(Habitat, Region)), level = 0.95, linetype = 2) +
-  facet_wrap(~title, scales = "free") +  # facet titles = Phylum + PC labels
-  theme_bw() +
-  scale_color_manual(values = habitat_colors) +
-  theme(strip.text = element_text(face = "bold", size = 12)) +
-  labs(x = "PC1", y = "PC2")
+  stat_ellipse(
+    aes(group = Region),
+    level = 0.95,
+    linetype = 2,
+    na.rm = TRUE
+  ) +
+  facet_wrap(~ title, scales = "free") +
+  scale_color_manual(values = east_west_colors) +
+  theme_bw()
 
 ```
 
+
+```{r}
+# -----------------------------
+# Extract OTU table
+# -----------------------------
+otu_mat <- as(otu_table(ps_top), "matrix")
+if (taxa_are_rows(ps_top)) {
+  otu_mat <- t(otu_mat)
+}
+
+# -----------------------------
+# Bray–Curtis similarity (%)
+# -----------------------------
+bc_dist <- vegdist(otu_mat, method = "bray",binary = T)
+bc_sim  <- (1 - as.matrix(bc_dist)) * 100
+
+# -----------------------------
+# Geographic distance
+# -----------------------------
+meta <- data.frame(sample_data(ps_top))
+meta$lat <- as.numeric(meta$decimalLatitude)
+meta$lon <- as.numeric(meta$decimalLongitude)
+
+coords <- meta[, c("lat", "lat")] 
+geo_dist <- distm(coords, fun = distHaversine) / 1000 
+rownames(geo_dist) <- rownames(meta) 
+colnames(geo_dist) <- rownames(meta)
+
+# -----------------------------
+# Convert distances to long format
+# -----------------------------
+bc_long <- as.data.frame(as.table(bc_sim))
+colnames(bc_long) <- c("sample1", "sample2", "percent_shared")
+
+geo_long <- as.data.frame(as.table(geo_dist))
+colnames(geo_long) <- c("sample1", "sample2", "geo_km")
+
+df <- bc_long %>%
+  left_join(geo_long, by = c("sample1", "sample2")) %>%
+  filter(sample1 != sample2)
+
+# -----------------------------
+# Add sample metadata
+# -----------------------------
+meta_lookup <- meta %>%
+  rownames_to_column("sample1") %>%
+  select(sample1, Region)
+
+df <- df %>%
+  left_join(meta_lookup, by = "sample1")
+
+# -----------------------------
+# Add phylum info for ALL ASVs
+# -----------------------------
+tax <- as.data.frame(tax_table(ps_top))
+
+otu_pa <- as.data.frame(otu_mat)
+otu_pa$sample <- rownames(otu_pa)
+
+# Expand OTUs to long format
+otu_long <- otu_pa %>%
+  pivot_longer(-sample, names_to = "ASV", values_to = "present") %>%
+  filter(present == 1) %>%
+  left_join(
+    tax %>% rownames_to_column("ASV") %>% select(ASV, Family),
+    by = "ASV"
+  )
+
+# Join phylum info to df: now each row can repeat for multiple phyla
+df <- df %>%
+  left_join(
+    otu_long %>% rename(sample1 = sample) %>% select(sample1, Family) %>% distinct(),
+    by = "sample1"
+  )
+
+# -----------------------------
+# Plot distance–decay faceted by phylum
+# -----------------------------
+ggplot(df, aes(x = geo_km, y = percent_shared,
+               color = Region,
+               shape = Region)) +
+  geom_point(alpha = 0.1, size = 2) +
+  scale_color_manual(values = east_west_colors) +
+  geom_smooth(aes(group = Region),
+              method = "loess",
+              se = FALSE) +
+  facet_wrap(~ Family, scales = "free_y") +
+  labs(
+    x = "Geographic distance (km)",
+    y = "Bray–Curtis similarity (%)",
+    color = "Region",
+    shape = "Region",
+    title = "Distance–decay of ASV similarity by Family"
+  ) +
+  theme_bw()
+```
