@@ -5,7 +5,7 @@ date: "2025-12-30"
 output: html_document
 ---
 
-DB to change east west lable to region!
+mostly packages 
 ```{r}
 #if (!requireNamespace("BiocManager", quietly=TRUE))
 #    install.packages("BiocManager")
@@ -107,6 +107,28 @@ mpse_samples_filtered <- mpse_samples %>%
 asv_table <- assay(mpse_samples_filtered, "Abundance")
 ```
 
+phyloseq import 
+```{r}
+#---------------------------
+# Import data
+#---------------------------
+physeq <- qza_to_phyloseq(
+  features  = "data/microbiome/rarefied-table.qza",
+  tree      = "data/microbiome/rooted-tree.qza",
+  taxonomy  = "data/microbiome/taxonomy.qza",
+  metadata  = "MicrobiotaProcess_sample_data.tsv"
+)
+
+#---------------------------
+# Sample filtering
+#---------------------------
+ps <- physeq %>%
+  ps_filter(scientificName == "Peromyscus maniculatus") %>%
+  ps_filter(stateProvince != "Arizona")
+
+sample_names(ps) <- sample_data(ps)$labtracking
+```
+
 ```{r}
 #use the gps points and USGS national land coverage data to assign habitat
 point <- as.data.frame(colData(mpse_samples_filtered))
@@ -178,6 +200,31 @@ write.table(sample_data_df,
             row.names = TRUE)
 
 ```
+
+geographic distance
+```{r}
+# -----------------------------
+# Geographic distance
+# -----------------------------
+meta <- data.frame(sample_data(ps))
+meta$decimalLatitude <- as.numeric(meta$decimalLatitude)
+meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
+
+# Coordinates matrix
+coords <- as.matrix(meta[, c("decimalLongitude", "decimalLatitude")])
+centroid <- colMeans(coords, na.rm = TRUE)
+meta$geo_km <- distHaversine(coords, centroid) / 1000
+
+#or?
+
+coords2 <- meta[, c("decimalLatitude", "decimalLongitude")] 
+geo_dist <- distm(coords2, fun = distHaversine) / 1000 
+rownames(geo_dist) <- rownames(meta) 
+colnames(geo_dist) <- rownames(meta)
+
+
+```
+
 
 #sort the metadata and the otu table
 metadata_filtered_sorted <- metadata_filtered[order(metadata_filtered$labtracking),]
@@ -592,7 +639,6 @@ dist_object_no_zero = dist_object
 mt = cultevo::mantel.test(dist(sor_mat),dist(dist_object_no_zero), omitzerodistances = TRUE, trials = 999)
 mt
 
-
 #### plot the mantel tests 
 # Convert to long data frames for plotting
 df_with_zeros <- data.frame(
@@ -722,47 +768,9 @@ plot(phymap,
 
 ```
 
-this is based on an aggregated speices otu table
-___________________________________________________________________________
-```{r}
-Taxtab<-read_qza("data/microbiome/taxonomy.qza")$data %>% parse_taxonomy()
-
-### Let's try aggrergating to species ---------------------
-Taxtab$lowest_taxon <- apply(Taxtab, 1, function(x) tail(na.omit(x), 1))
-otu_by_taxon <- as.data.frame(asv_table)
-otu_by_taxon$taxon <- Taxtab[rownames(asv_table), "lowest_taxon"]
-otu_by_taxon <- aggregate(. ~ taxon, data = otu_by_taxon, sum)
-otu_by_taxon <- otu_by_taxon %>%
-  column_to_rownames(var = "taxon")
-nrow(otu_by_taxon) # ok
-unique(colnames(otu_by_taxon) == gps$labtracking) # ok
-otu_by_taxon = as.data.frame(otu_by_taxon)
-
-summary(rownames(otu_by_taxon))
-```
-
 
 codiversity attempt 
 ```{r}
-#---------------------------
-# Import data
-#---------------------------
-physeq <- qza_to_phyloseq(
-  features  = "data/microbiome/rarefied-table.qza",
-  tree      = "data/microbiome/rooted-tree.qza",
-  taxonomy  = "data/microbiome/taxonomy.qza",
-  metadata  = "MicrobiotaProcess_sample_data.tsv"
-)
-
-#---------------------------
-# Sample filtering
-#---------------------------
-ps <- physeq %>%
-  ps_filter(scientificName == "Peromyscus maniculatus") %>%
-  ps_filter(stateProvince != "Arizona")
-
-sample_names(ps) <- sample_data(ps)$labtracking
-
 #---------------------------
 # Taxonomic aggregation
 #---------------------------
@@ -1157,18 +1165,6 @@ bc_dist <- vegdist(otu_mat, method = "bray",binary = T)
 bc_sim  <- (1 - as.matrix(bc_dist)) * 100
 
 # -----------------------------
-# Geographic distance
-# -----------------------------
-meta <- data.frame(sample_data(ps_top))
-meta$lat <- as.numeric(meta$decimalLatitude)
-meta$lon <- as.numeric(meta$decimalLongitude)
-
-coords <- meta[, c("lat", "lat")] 
-geo_dist <- distm(coords, fun = distHaversine) / 1000 
-rownames(geo_dist) <- rownames(meta) 
-colnames(geo_dist) <- rownames(meta)
-
-# -----------------------------
 # Convert distances to long format
 # -----------------------------
 bc_long <- as.data.frame(as.table(bc_sim))
@@ -1236,3 +1232,44 @@ ggplot(df, aes(x = geo_km, y = percent_shared,
   ) +
   theme_bw()
 ```
+
+MaAsLin (Microbiome Multivariable Associations with Linear Models)
+https://github.com/biobakery/biobakery/wiki/maaslin3
+```{r}
+library(maaslin3)
+
+# Extract taxonomy counts 
+Taxtab<-read_qza("data/microbiome/taxonomy.qza")$data %>% parse_taxonomy()
+
+### Let's try aggrergating to species ---------------------
+Taxtab$lowest_taxon <- apply(Taxtab, 1, function(x) tail(na.omit(x), 1))
+otu_by_taxon <- as.data.frame(asv_table)
+otu_by_taxon$taxon <- Taxtab[rownames(asv_table), "lowest_taxon"]
+otu_by_taxon <- aggregate(. ~ taxon, data = otu_by_taxon, sum)
+otu_by_taxon <- otu_by_taxon %>%
+  column_to_rownames(var = "taxon")
+nrow(otu_by_taxon) # ok
+unique(colnames(otu_by_taxon) == gps$labtracking) # ok
+otu_by_taxon = as.data.frame(otu_by_taxon)
+
+# Factor the categorical variables to test
+meta$Region <- factor(meta$Region, levels = c('west', 'east'))
+
+set.seed(1)
+fit_out <- maaslin3(input_data = t(otu_by_taxon),
+                    input_metadata = meta,
+                    output = 'hmp2_output',
+                    formula = '~ Region + Region:geo_km',
+                    normalization = 'TSS',
+                    transform = 'LOG',
+                    augment = TRUE,
+                    standardize = TRUE,
+                    plot_summary_plot = TRUE,
+                    plot_associations = TRUE,
+                    max_significance = 0.1,
+                    median_comparison_abundance = TRUE,
+                    median_comparison_prevalence = F,
+                    max_pngs = 250,
+                    cores = 1)
+```
+
