@@ -58,6 +58,7 @@ suppressPackageStartupMessages({
     library(stringr)
     library(purrr)
     library(gridExtra)
+    library(geosphere)
 })
 ```
 
@@ -82,7 +83,7 @@ east_west_colors <- c(
 
 ```
 
-MicrobiotaProcess
+MicrobiotaProcess import
 ```{r}
 mpse_samples <- mp_import_qiime2(otuqza="data/microbiome/rarefied-table.qza", 
                           taxaqza="data/microbiome/taxonomy.qza", 
@@ -104,7 +105,12 @@ mpse_samples_filtered <- mpse_samples %>%
   filter(specificEpithet == "maniculatus") %>%
   filter(stateProvince != "Arizona")
 
-asv_table <- assay(mpse_samples_filtered, "Abundance")
+mpse_asv_table <- assay(mpse_samples_filtered, "Abundance")
+
+mpse_bc_dist   <- vegdist(t(mpse_asv_table), method = "bray") 
+mpse_sor_dist  <- vegdist(t(mpse_asv_table), method = "bray", binary = TRUE) 
+
+labs <- attr(mpse_bc_dist, "Labels")
 ```
 
 phyloseq import 
@@ -127,8 +133,14 @@ ps <- physeq %>%
   ps_filter(stateProvince != "Arizona")
 
 sample_names(ps) <- sample_data(ps)$labtracking
+
+ps_otu <- otu_table(ps)
+
+ps_bc_dist   <- vegdist(ps_otu, method = "bray") 
+ps_sor_dist  <- vegdist(ps_otu, method = "bray", binary = TRUE)
 ```
 
+rasters and such
 ```{r}
 #use the gps points and USGS national land coverage data to assign habitat
 point <- as.data.frame(colData(mpse_samples_filtered))
@@ -210,21 +222,24 @@ meta <- data.frame(sample_data(ps))
 meta$decimalLatitude <- as.numeric(meta$decimalLatitude)
 meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
 
-# Coordinates matrix
+#distance from a centroid
 coords <- as.matrix(meta[, c("decimalLongitude", "decimalLatitude")])
 centroid <- colMeans(coords, na.rm = TRUE)
 meta$geo_km <- distHaversine(coords, centroid) / 1000
 
-#or?
+#or 
 
-coords2 <- meta[, c("decimalLatitude", "decimalLongitude")] 
+#distance in a matrix
+coords2 <- meta[, c("decimalLongitude", "decimalLatitude")]
 geo_dist <- distm(coords2, fun = distHaversine) / 1000 
 rownames(geo_dist) <- rownames(meta) 
 colnames(geo_dist) <- rownames(meta)
-
-
 ```
 
+from gabri
+```{r}
+metadata_filtered <- meta
+otu <- t(otu_table(ps))
 
 #sort the metadata and the otu table
 metadata_filtered_sorted <- metadata_filtered[order(metadata_filtered$labtracking),]
@@ -232,8 +247,6 @@ otu_sorted <- otu[order(rownames(otu)),]
 
 #check the data for order 
 unique(rownames(otu_sorted) == metadata_filtered_sorted$labtracking) # OK
-
-based off gabri code
 
 ### Calculate alpha diversity
 metadata_filtered_sorted$Richness.rar<-specnumber(otu_sorted) # Counts otu number
@@ -246,11 +259,10 @@ a = ggplot(metadata_filtered_sorted, aes(x = land_use_location, y = Richness.rar
   labs(y = "Number of otus", x = "Mississippi River Split") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 a
+```
 
-
-
-### Beta diversity 
-##### Beta diversity ----------------
+Beta diversity 
+```{r}
 set.seed(12)
 bac.dist<-vegdist(otu_sorted, method="bray") ### this calculates BC dissimilaries
 bac.dist.sor<-vegdist(otu_sorted, method="bray", binary  = TRUE ) ### this calculates Sorensen dissimilaries
@@ -265,20 +277,32 @@ metadata_filtered$Axis02<-bac.nmds$points[,2]
 
 # install.packages("viridis") if needed
 bac_nmds <- ggplot(metadata_filtered, aes(x = Axis01, y = Axis02)) +
-  geom_point(aes(color = stateProvince, shape = land_use_location), size = 2, alpha = 0.8) +
-  stat_ellipse(aes(fill = land_use_location), geom = "polygon", alpha = 0.45, level = 0.68, show.legend = FALSE) +
+  geom_point(aes(color = Region, shape = Region), size = 2, alpha = 0.8) +
+  stat_ellipse(aes(fill = Region), geom = "polygon", alpha = 0.45, level = 0.68, show.legend = FALSE) +
   scale_color_viridis_d(option = "turbo", begin = 0.05, end = 0.95) +
   scale_fill_viridis_d(option  = "turbo", begin = 0.05, end = 0.95) +
   theme_classic() +
-  labs(x = "NMDS1", y = "NMDS2", shape = "land_use_location") +
+  labs(x = "NMDS1", y = "NMDS2", shape = "Region") +
   ggtitle("Bray Curtis dissimilarity")
 bac_nmds
 
-#perm = adonis2(bac.dist ~ land_use_location + stateProvince, data = metadata_filtered, by = "margin")
-#perm
+perm = adonis2(bac.dist ~ Region, data = metadata_filtered, by = "margin")
+perm
+```
+
+dbmem
+```{r}
+library(adespatial)
+
+geo_dist2 <- as.dist(geo_dist)
+mem <- dbmem(geo_dist2, thresh = max(geo_dist2) * 0.1)
+
+capscale(ps_bc_dist ~ ., data = as.data.frame(mem))
+summary(rda_model)
+```
+
 
 vignette used for code chunks below: https://bioconductor.org/packages/release/bioc/vignettes/MicrobiotaProcess/inst/doc//MicrobiotaProcess.html
-
 
 Rarefied species richness
 ```{r}
@@ -616,16 +640,10 @@ plot(phy_tree,
 mantel test
 DB need to readjust the distance decay to include the east west divide not just distance
 ```{r}
-bc_dist   <- vegdist(t(asv_table), method = "bray") 
-sor_dist  <- vegdist(t(asv_table), method = "bray", binary = TRUE) 
-
-labs <- attr(bc_dist, "Labels")
-bc_mat <- as.matrix(bc_dist)[labs, labs]
-
 ####################
 # Physical distance#
 ####################
-sor_mat <- as.matrix(sor_dist)[labs, labs]
+sor_mat <- as.matrix(mpse_sor_dist)[labs, labs]
 sor_mat <- sor_mat[rownames(dist_object), colnames(dist_object)]
 
 unique(rownames(dist_object) == rownames(sor_mat)) # ok 
@@ -643,12 +661,12 @@ mt
 # Convert to long data frames for plotting
 df_with_zeros <- data.frame(
   x = as.vector(dist_object),
-  y = as.vector(sor_dist)
+  y = as.vector(mpse_sor_dist)
 )
 
 df_no_zeros <- data.frame(
   x = as.vector(dist_object_no_zero),
-  y = as.vector(sor_dist)
+  y = as.vector(mpse_sor_dist)
 )
 df_no_zeros <- df_no_zeros[df_no_zeros$x > 0,]
 
@@ -677,7 +695,7 @@ grid.arrange(p1, p2, ncol = 2)
 #### Plot the tanglegram with the expanded tree --------------------------------
 note: this phylosymbosis
 ```{r}
-hc <- hclust(sor_dist, method = "average")
+hc <- hclust(mpse_sor_dist, method = "average")
 tree <- as.phylo(hc)
 
 plot(tree,
@@ -732,6 +750,7 @@ ggplot(df_legend, aes(x = 1, y = Region, fill = Region)) +
   labs(title = "Region")
 ```
 
+purty map with bac tree distance 
 ```{r}
 library(mapdata) 
 
@@ -767,7 +786,6 @@ plot(phymap,
      ylim=c(24, 50))
 
 ```
-
 
 codiversity attempt 
 ```{r}
@@ -935,7 +953,7 @@ max_left_x_df <- left_tree_plot_df %>%
 
 # replicate right tree for each valid phylum
 right_tree_df <- right_tree_df %>%
-  crossing(v = valid_phyla) %>%
+  crossing(Phylum = valid_phyla) %>%
   left_join(max_left_x_df, by = "Phylum") %>%
   mutate(x = x + max_left_x + 1) # shift right tree after left tree
 
@@ -982,7 +1000,7 @@ links <- asv_mat %>%
   ) %>%
   filter(Abundance > 0) %>%
   left_join(tax_df, by = "asv") %>%
-  filter(Phylum %in% valid_genera) %>% # only valid phyla
+  #filter(Phylum %in% valid_genera) %>% # only valid phyla
   left_join(as(sample_data(ps_clean), "data.frame"), by = "labtracking") %>%
   mutate(
     w = scales::rescale(log10(Abundance + 1), c(0.2, 1))
@@ -1034,13 +1052,13 @@ ggplot() +
   ) +
   scale_color_brewer(palette = "Set2", name = "Region") +
   scale_linewidth(range = c(0.2, 1), guide = "none") +
-  facet_wrap(~Family, scales = "free_y") +
+  facet_wrap(~Phylum, scales = "free_y") +
   theme_void() +
   coord_cartesian(clip = "off")
 
 ```
 
-
+top 20 families PCoA with taxa as points (I think?)
 ```{r}
 phyla <- unique(as.character(tax_table(ps)[, "Family"]))
 
@@ -1056,6 +1074,7 @@ p1 + facet_wrap(~Family)
 
 ```
 
+top 20 families PCoA with inidividauls as points
 ```{r}
 # Step 1: Get all Families 
 families <- unique(as.vector(tax_table(ps_top)[, "Family"]))
@@ -1148,7 +1167,7 @@ ggplot(
 
 ```
 
-
+top 20 families distance decay plots
 ```{r}
 # -----------------------------
 # Extract OTU table
@@ -1193,11 +1212,11 @@ df <- df %>%
 tax <- as.data.frame(tax_table(ps_top))
 
 otu_pa <- as.data.frame(otu_mat)
-otu_pa$sample <- rownames(otu_pa)
+otu_pa$sample1 <- rownames(otu_pa)
 
 # Expand OTUs to long format
 otu_long <- otu_pa %>%
-  pivot_longer(-sample, names_to = "ASV", values_to = "present") %>%
+  pivot_longer(-sample1, names_to = "ASV", values_to = "present") %>%
   filter(present == 1) %>%
   left_join(
     tax %>% rownames_to_column("ASV") %>% select(ASV, Family),
@@ -1207,7 +1226,7 @@ otu_long <- otu_pa %>%
 # Join phylum info to df: now each row can repeat for multiple phyla
 df <- df %>%
   left_join(
-    otu_long %>% rename(sample1 = sample) %>% select(sample1, Family) %>% distinct(),
+    otu_long %>% select(sample1, Family) %>% distinct(),
     by = "sample1"
   )
 
@@ -1243,8 +1262,8 @@ Taxtab<-read_qza("data/microbiome/taxonomy.qza")$data %>% parse_taxonomy()
 
 ### Let's try aggrergating to species ---------------------
 Taxtab$lowest_taxon <- apply(Taxtab, 1, function(x) tail(na.omit(x), 1))
-otu_by_taxon <- as.data.frame(asv_table)
-otu_by_taxon$taxon <- Taxtab[rownames(asv_table), "lowest_taxon"]
+otu_by_taxon <- as.data.frame(ps_otu)
+otu_by_taxon$taxon <- Taxtab[rownames(ps_otu), "lowest_taxon"]
 otu_by_taxon <- aggregate(. ~ taxon, data = otu_by_taxon, sum)
 otu_by_taxon <- otu_by_taxon %>%
   column_to_rownames(var = "taxon")
@@ -1254,12 +1273,20 @@ otu_by_taxon = as.data.frame(otu_by_taxon)
 
 # Factor the categorical variables to test
 meta$Region <- factor(meta$Region, levels = c('west', 'east'))
+meta$sex <- factor(meta$sex, levels = c('M', 'F'))
+meta$land_use <- factor(meta$land_use, levels = c('Grassland/Herbaceous',
+                                                  'Evergreen Forest',
+                                                  "Shrub/Scrub",
+                                                  "Cultivated Crops",
+                                                  "Deciduous Forest",
+                                                  "Mixed Forest"))
+
 
 set.seed(1)
 fit_out <- maaslin3(input_data = t(otu_by_taxon),
                     input_metadata = meta,
                     output = 'hmp2_output',
-                    formula = '~ Region + Region:geo_km',
+                    formula = '~ Region*geo_km + sex + land_use',
                     normalization = 'TSS',
                     transform = 'LOG',
                     augment = TRUE,
@@ -1271,5 +1298,7 @@ fit_out <- maaslin3(input_data = t(otu_by_taxon),
                     median_comparison_prevalence = F,
                     max_pngs = 250,
                     cores = 1)
-```
 
+
+
+```
