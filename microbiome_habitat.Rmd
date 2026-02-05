@@ -136,9 +136,79 @@ sample_names(ps) <- sample_data(ps)$labtracking
 
 ps_otu <- otu_table(ps)
 
-ps_bc_dist   <- vegdist(ps_otu, method = "bray") 
+ps_bc_dist   <- vegdist(t(ps_otu), method = "bray") 
 ps_sor_dist  <- vegdist(ps_otu, method = "bray", binary = TRUE)
 ```
+
+% shared ASV
+```{r}
+#easiset with binary data
+ps.pa <- transform_sample_counts(ps, function(x) ifelse(x > 0, 1, 0))
+otu <- as(otu_table(ps.pa), "matrix")
+
+if (taxa_are_rows(ps.pa)) {
+  otu <- t(otu)
+}
+
+bray <- vegdist(otu, method = "bray", binary = TRUE)
+bray_sim <- 1 - as.matrix(bray)
+
+# 3. Long format + upper triangle only
+shared_df <- as.data.frame(as.table(bray_sim)) %>%
+  dplyr::filter(as.integer(Var1) < as.integer(Var2)) %>%   # safest filter
+  dplyr::mutate(
+    Var1 = as.character(Var1),
+    Var2 = as.character(Var2),
+    PercentShared = Freq * 100
+  ) %>%
+  dplyr::select(-Freq)
+
+# 4. Join metadata
+shared_df <- shared_df %>%
+  dplyr::left_join(meta, by = c("Var1" = "labtracking")) %>%
+  dplyr::rename(State1 = stateProvince, Region1 = Region) %>%
+  dplyr::left_join(meta, by = c("Var2" = "labtracking")) %>%
+  dplyr::rename(State2 = stateProvince, Region2 = Region)
+
+# 5. Define comparison categories
+shared_df <- shared_df %>%
+  dplyr::mutate(
+    Comparison = dplyr::case_when(
+      State1 == State2 ~ "Within state",
+      State1 != State2 & Region1 == Region2 ~ "Between states (same region)",
+      Region1 != Region2 ~ "Between regions (East vs West)"
+    )
+  )
+
+shared_df$Comparison <- factor(
+  shared_df$Comparison,
+  levels = c(
+    "Within state",
+    "Between states (same region)",
+    "Between regions (East vs West)"
+  )
+)
+
+# 6. Plot
+ggplot(shared_df, aes(x = Comparison, y = PercentShared, fill = Comparison)) +
+  geom_violin(outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.3, size = 1) +
+  #scale_fill_manual(values = c(
+  #  "Within state" = "#6B8FB3",
+  #  "Between states (same region)" = "#A0775A",
+  #  "Between regions (East vs West)" = "#D55E00"
+  #)) +
+  theme_bw() +
+  labs(
+    x = NULL,
+    y = "Percent shared ASVs"
+  ) +
+  guides(fill = "none")
+
+
+
+```
+
 
 rasters and such
 ```{r}
@@ -291,14 +361,14 @@ perm
 ```
 
 dbmem
+#there is spatial autocorrelation 
 ```{r}
 library(adespatial)
 
-geo_dist2 <- as.dist(geo_dist)
-mem <- dbmem(geo_dist2, thresh = max(geo_dist2) * 0.1)
+dbrda1<- dbrda(ps_bc_dist ~ decimalLatitude + decimalLongitude + Region, data = meta, distance = "bray")
 
-capscale(ps_bc_dist ~ ., data = as.data.frame(mem))
-summary(rda_model)
+anova1<-anova(dbrda1, by="margin", permutation = 9999)
+anova1
 ```
 
 
@@ -1254,6 +1324,8 @@ ggplot(df, aes(x = geo_km, y = percent_shared,
 
 MaAsLin (Microbiome Multivariable Associations with Linear Models)
 https://github.com/biobakery/biobakery/wiki/maaslin3
+
+do this at the family and or spices level
 ```{r}
 library(maaslin3)
 
