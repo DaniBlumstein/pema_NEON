@@ -138,6 +138,10 @@ ps_otu <- otu_table(ps)
 
 ps_bc_dist   <- vegdist(t(ps_otu), method = "bray") 
 ps_sor_dist  <- vegdist(ps_otu, method = "bray", binary = TRUE)
+
+meta <- data.frame(sample_data(ps))
+meta$decimalLatitude <- as.numeric(meta$decimalLatitude)
+meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
 ```
 
 % shared ASV
@@ -204,11 +208,7 @@ ggplot(shared_df, aes(x = Comparison, y = PercentShared, fill = Comparison)) +
     y = "Percent shared ASVs"
   ) +
   guides(fill = "none")
-
-
-
 ```
-
 
 rasters and such
 ```{r}
@@ -288,14 +288,10 @@ geographic distance
 # -----------------------------
 # Geographic distance
 # -----------------------------
-meta <- data.frame(sample_data(ps))
-meta$decimalLatitude <- as.numeric(meta$decimalLatitude)
-meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
-
 #distance from a centroid
 coords <- as.matrix(meta[, c("decimalLongitude", "decimalLatitude")])
 centroid <- colMeans(coords, na.rm = TRUE)
-meta$geo_km <- distHaversine(coords, centroid) / 1000
+meta$geo_km <- distVincentyEllipsoid(coords, centroid) / 1000
 
 #or 
 
@@ -308,11 +304,10 @@ colnames(geo_dist) <- rownames(meta)
 
 from gabri
 ```{r}
-metadata_filtered <- meta
 otu <- t(otu_table(ps))
 
 #sort the metadata and the otu table
-metadata_filtered_sorted <- metadata_filtered[order(metadata_filtered$labtracking),]
+metadata_filtered_sorted <- meta[order(meta$labtracking),]
 otu_sorted <- otu[order(rownames(otu)),]
 
 #check the data for order 
@@ -342,11 +337,11 @@ bac.nmds<-metaMDS(bac.dist, k=2, try=999)
 bac.nmds$stress #0.21
 stress= paste("stress = ", round(bac.nmds$stress, digits = 2))
 
-metadata_filtered$Axis01<-bac.nmds$points[,1]
-metadata_filtered$Axis02<-bac.nmds$points[,2]
+meta$Axis01<-bac.nmds$points[,1]
+meta$Axis02<-bac.nmds$points[,2]
 
 # install.packages("viridis") if needed
-bac_nmds <- ggplot(metadata_filtered, aes(x = Axis01, y = Axis02)) +
+bac_nmds <- ggplot(meta, aes(x = Axis01, y = Axis02)) +
   geom_point(aes(color = Region, shape = Region), size = 2, alpha = 0.8) +
   stat_ellipse(aes(fill = Region), geom = "polygon", alpha = 0.45, level = 0.68, show.legend = FALSE) +
   scale_color_viridis_d(option = "turbo", begin = 0.05, end = 0.95) +
@@ -355,21 +350,69 @@ bac_nmds <- ggplot(metadata_filtered, aes(x = Axis01, y = Axis02)) +
   labs(x = "NMDS1", y = "NMDS2", shape = "Region") +
   ggtitle("Bray Curtis dissimilarity")
 bac_nmds
-
-perm = adonis2(bac.dist ~ Region, data = metadata_filtered, by = "margin")
-perm
 ```
 
-dbmem
-#there is spatial autocorrelation 
+Bayesian Generalized (Non-)Linear Multivariate Multilevel Models
 ```{r}
-library(adespatial)
+#### Create metadata -------------
+geo_dist
+ps_bc_dist
 
-dbrda1<- dbrda(ps_bc_dist ~ decimalLatitude + decimalLongitude + Region, data = meta, distance = "bray")
+melted_BC <- reshape2::melt(as.matrix(ps_bc_dist), varnames = c("Sample1", "Sample2"), value.name = "BC_Dissimilarity")
 
-anova1<-anova(dbrda1, by="margin", permutation = 9999)
-anova1
+melted_geo <- reshape2::melt(as.matrix(geo_dist), varnames = c("Sample1", "Sample2"), value.name = "geo_Distance")
+
+unique(melted_BC$Sample1 == melted_geo$Sample1)
+unique(melted_BC$Sample2 == melted_geo$Sample2) # Ok
+
+#### Reshape
+melted_diffs = melted_geo
+melted_diffs$BC_dissimilarity = melted_BC$BC_Dissimilarity
+
+### convert into similarity
+#melted_diffs$geo_Similarity = 1 - melted_diffs$geo_Dissimilarity
+melted_diffs$BC_Similarity = 1 - melted_diffs$BC_dissimilarity
+
+#### remove half of the dataset
+melted_diffs <- melted_diffs %>%
+  filter(Sample1 != Sample2) %>%
+  mutate(pair_min = pmin(as.character(Sample1), as.character(Sample2)),
+         pair_max = pmax(as.character(Sample1), as.character(Sample2))) %>%
+  distinct(pair_min, pair_max, .keep_all = TRUE) %>%
+  dplyr::select(Sample1, Sample2, geo_Distance,BC_Similarity )
+
+# Create a vector mapping sample -> region
+region_map <- setNames(meta$Region, meta$labtracking)
+
+# Use match (or the vector) to get the regions
+melted_diffs$region1 <- region_map[melted_diffs$Sample1]
+melted_diffs$region2 <- region_map[melted_diffs$Sample2]
+
+# Check if they are in the same region
+melted_diffs$same_region <- melted_diffs$region1 == melted_diffs$region2
+
+range.use <- function(x,min.use,max.use){ (x - min(x,na.rm=T))/(max(x,na.rm=T)-min(x,na.rm=T)) * (max.use - min.use) + min.use }
+
+melted_diffs$dist_scaled <- range.use(melted_diffs$geo_Distance, 0, 1)
+
+ggplot(melted_diffs, aes(x=geo_Distance, y=BC_Similarity, color = same_region)) +
+  geom_point()
+
+library(brms)
+model <- brm(BC_Similarity~1+dist_scaled * same_region +
+            (1|mm(Sample1,Sample2)),
+              data = melted_diffs,
+              #family= "Beta",
+              warmup = 2000, iter = 6000,
+              threads = threading(6),
+              cores = 24,
+              chains = 4,
+              control=list(adapt_delta=0.95),
+              init=0)
+
+summary(model)
 ```
+
 
 
 vignette used for code chunks below: https://bioconductor.org/packages/release/bioc/vignettes/MicrobiotaProcess/inst/doc//MicrobiotaProcess.html
@@ -765,6 +808,11 @@ grid.arrange(p1, p2, ncol = 2)
 #### Plot the tanglegram with the expanded tree --------------------------------
 note: this phylosymbosis
 ```{r}
+library(ape)
+library(phangorn)
+library(TreeSearch)
+
+# Convert hclust to phylo
 hc <- hclust(mpse_sor_dist, method = "average")
 tree <- as.phylo(hc)
 
@@ -772,7 +820,6 @@ plot(tree,
      tip.color = tip_colors,
      cex = 0.6,
      no.margin = TRUE,
-     #x.lim = c(0, max(node.depth.edgelength(tree)) * 0.1))
      use.edge.length = FALSE)
 
 
@@ -822,39 +869,53 @@ ggplot(df_legend, aes(x = 1, y = Region, fill = Region)) +
 
 purty map with bac tree distance 
 ```{r}
-library(mapdata) 
+library(mapdata)
 
-smoll_map <- gps[,c("decimalLatitude", "decimalLongitude")]
+# Prepare map data
+smoll_map <- gps[, c("decimalLatitude", "decimalLongitude")]
 smoll_map$decimalLatitude <- as.numeric(smoll_map$decimalLatitude)
 smoll_map$decimalLongitude <- as.numeric(smoll_map$decimalLongitude)
 smoll_map$link_cols <- as.factor(gps$link_cols)
 
-# Create a palette
+# Create a color palette for tips
 palette <- rainbow(length(levels(smoll_map$link_cols)))
+tip_colors <- palette[as.numeric(smoll_map$link_cols[match(tree$tip.label, gps$SampleID)])]
 
-# Map colors in tip order
+# Set edge lengths to 1 for plotting
 tree_clado <- tree
-tip_colors <- palette[as.numeric(smoll_map$link_cols[match(tree_clado$tip.label, gps$SampleID)])]
-
 tree_clado$edge.length <- rep(1, length(tree$edge.length))
 
+# Convert phylo tree to map object
 phymap <- phylo.to.map(
   tree_clado,
   smoll_map,
   plot = FALSE,
-  database="worldHires",regions="USA",
-  
+  database = "worldHires",
+  regions = "USA"
 )
 
+# Plot the map
 plot(phymap,
-     ftype="off",
-     fsize=0.8, 
-  lty="solid",
-  map.bg="grey",
-  colors=tip_colors,
-  xlim=c(-130, -65),
-     ylim=c(24, 50))
+     ftype = "off",
+     fsize = 0.8,
+     lty = "solid",
+     map.bg = "grey",
+     colors = tip_colors,
+     xlim = c(-130, -65),
+     ylim = c(24, 50))
 
+# Add jackknife support values at internal nodes
+# Only do this if your tree has node labels
+if(!is.null(tree_clado$node.label)) {
+  nodelabels(
+    text = tree_clado$node.label,
+    node = 1:tree_clado$Nnode + Ntip(tree_clado),  # internal nodes start after tips
+    frame = "none",
+    adj = c(1, -0.2),
+    cex = 0.7,
+    col = "black"
+  )
+}
 ```
 
 codiversity attempt 
@@ -1128,28 +1189,31 @@ ggplot() +
 
 ```
 
-top 20 families PCoA with taxa as points (I think?)
+top 20 Genus 
 ```{r}
-phyla <- unique(as.character(tax_table(ps)[, "Family"]))
+ps_genus <- tax_glom(ps, taxrank = "Species")
 
-phylum.sum = tapply(taxa_sums(ps), tax_table(ps)[, "Family"], sum, na.rm=TRUE)
-top5phyla = names(sort(phylum.sum, TRUE))[1:20]
-ps_top = prune_taxa((tax_table(ps)[, "Family"] %in% top5phyla), ps)
+# Remove uncultured / unclassified / unidentified taxa
+ps_genus <- subset_taxa(
+  ps_genus,
+  !grepl(
+    "uncultured|unclassified|unidentified|unknown",
+    Species,
+    ignore.case = TRUE
+  )
+)
 
-GP.ord <- ordinate(ps_top, "PCoA", "bray")
-p1 = plot_ordination(ps_top, GP.ord, type="taxa", color="Family", title="taxa")
-print(p1)
-
-p1 + facet_wrap(~Family)
-
+ps_genus_rel <- transform_sample_counts(ps_genus, function(x) x / sum(x))
+top20 <- names(sort(taxa_sums(ps_genus_rel), decreasing = TRUE))[1:30]
+ps_top20 <- prune_taxa(top20, ps_genus_rel)
 ```
 
-top 20 families PCoA with inidividauls as points
+top 20 families PCoA with individuals as points
 ```{r}
 # Step 1: Get all Families 
-families <- unique(as.vector(tax_table(ps_top)[, "Family"]))
+families <- unique(as.vector(tax_table(ps_top20)[, "Species"]))
 families <- families[!is.na(families)]
-subset_fam <- 
+
 
 # Step 2: Prepare containers
 pcoa_list   <- list()
@@ -1158,13 +1222,10 @@ axis_labels <- list()
 for (fam in families) {
 
   # Subset by Family
-  ps_sub <- subset_taxa(ps, Family == fam)
+  ps_sub <- subset_taxa(ps, Species == fam)
 
   # Remove empty samples
   ps_sub <- prune_samples(sample_sums(ps_sub) > 0, ps_sub)
-
-  # Need >= 3 samples for ellipses + PCoA stability
-  if (nsamples(ps_sub) < 3) next
 
   # Distance matrix
   dist_mat <- tryCatch(
@@ -1242,8 +1303,8 @@ top 20 families distance decay plots
 # -----------------------------
 # Extract OTU table
 # -----------------------------
-otu_mat <- as(otu_table(ps_top), "matrix")
-if (taxa_are_rows(ps_top)) {
+otu_mat <- as(otu_table(ps_top20), "matrix")
+if (taxa_are_rows(ps_top20)) {
   otu_mat <- t(otu_mat)
 }
 
@@ -1269,9 +1330,9 @@ df <- bc_long %>%
 # -----------------------------
 # Add sample metadata
 # -----------------------------
-meta_lookup <- meta %>%
-  rownames_to_column("sample1") %>%
-  select(sample1, Region)
+#meta_lookup <- meta %>%
+#  rownames_to_column("sample1") %>%
+ # select(sample1, Region)
 
 df <- df %>%
   left_join(meta_lookup, by = "sample1")
@@ -1279,7 +1340,7 @@ df <- df %>%
 # -----------------------------
 # Add phylum info for ALL ASVs
 # -----------------------------
-tax <- as.data.frame(tax_table(ps_top))
+tax <- as.data.frame(tax_table(ps_top20))
 
 otu_pa <- as.data.frame(otu_mat)
 otu_pa$sample1 <- rownames(otu_pa)
@@ -1289,14 +1350,14 @@ otu_long <- otu_pa %>%
   pivot_longer(-sample1, names_to = "ASV", values_to = "present") %>%
   filter(present == 1) %>%
   left_join(
-    tax %>% rownames_to_column("ASV") %>% select(ASV, Family),
+    tax %>% rownames_to_column("ASV") %>% select(ASV, Species),
     by = "ASV"
   )
 
 # Join phylum info to df: now each row can repeat for multiple phyla
 df <- df %>%
   left_join(
-    otu_long %>% select(sample1, Family) %>% distinct(),
+    otu_long %>% select(sample1, Species) %>% distinct(),
     by = "sample1"
   )
 
@@ -1311,16 +1372,17 @@ ggplot(df, aes(x = geo_km, y = percent_shared,
   geom_smooth(aes(group = Region),
               method = "loess",
               se = FALSE) +
-  facet_wrap(~ Family, scales = "free_y") +
+  facet_wrap(~ Species, scales = "free_y") +
   labs(
     x = "Geographic distance (km)",
     y = "Bray–Curtis similarity (%)",
     color = "Region",
     shape = "Region",
-    title = "Distance–decay of ASV similarity by Family"
+    title = "Distance–decay of ASV similarity by Species"
   ) +
   theme_bw()
 ```
+
 
 MaAsLin (Microbiome Multivariable Associations with Linear Models)
 https://github.com/biobakery/biobakery/wiki/maaslin3
@@ -1330,18 +1392,21 @@ do this at the family and or spices level
 library(maaslin3)
 
 # Extract taxonomy counts 
-Taxtab<-read_qza("data/microbiome/taxonomy.qza")$data %>% parse_taxonomy()
+#Taxtab<-read_qza("data/microbiome/taxonomy.qza")$data %>% parse_taxonomy()
 
 ### Let's try aggrergating to species ---------------------
-Taxtab$lowest_taxon <- apply(Taxtab, 1, function(x) tail(na.omit(x), 1))
-otu_by_taxon <- as.data.frame(ps_otu)
-otu_by_taxon$taxon <- Taxtab[rownames(ps_otu), "lowest_taxon"]
-otu_by_taxon <- aggregate(. ~ taxon, data = otu_by_taxon, sum)
-otu_by_taxon <- otu_by_taxon %>%
-  column_to_rownames(var = "taxon")
-nrow(otu_by_taxon) # ok
-unique(colnames(otu_by_taxon) == gps$labtracking) # ok
-otu_by_taxon = as.data.frame(otu_by_taxon)
+#Taxtab$lowest_taxon <- apply(Taxtab, 1, function(x) tail(na.omit(x), 1))
+#otu_by_taxon <- as.data.frame(ps_otu)
+#otu_by_taxon$taxon <- Taxtab[rownames(ps_otu), "lowest_taxon"]
+#otu_by_taxon <- aggregate(. ~ taxon, data = otu_by_taxon, sum)
+#otu_by_taxon <- otu_by_taxon %>%
+#  column_to_rownames(var = "taxon")
+#nrow(otu_by_taxon) # ok
+#unique(colnames(otu_by_taxon) == gps$labtracking) # ok
+#otu_by_taxon = as.data.frame(otu_by_taxon)
+ps_genus <- tax_glom(ps, taxrank = "Species")
+otu <-as(otu_table(ps), "matrix")
+
 
 # Factor the categorical variables to test
 meta$Region <- factor(meta$Region, levels = c('west', 'east'))
@@ -1355,10 +1420,10 @@ meta$land_use <- factor(meta$land_use, levels = c('Grassland/Herbaceous',
 
 
 set.seed(1)
-fit_out <- maaslin3(input_data = t(otu_by_taxon),
+fit_out <- maaslin3(input_data = otu,
                     input_metadata = meta,
                     output = 'hmp2_output',
-                    formula = '~ Region*geo_km + sex + land_use',
+                    formula = '~ Region*geo_km',
                     normalization = 'TSS',
                     transform = 'LOG',
                     augment = TRUE,
@@ -1370,7 +1435,5 @@ fit_out <- maaslin3(input_data = t(otu_by_taxon),
                     median_comparison_prevalence = F,
                     max_pngs = 250,
                     cores = 1)
-
-
 
 ```
