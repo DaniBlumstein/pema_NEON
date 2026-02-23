@@ -30,8 +30,11 @@ mostly packages
 #devtools::install_github("jbisanz/qiime2R")
 #devtools::install_github("zpneal/backbone", ref = "devel", build_vignettes = TRUE)
 
+setwd("~/Library/CloudStorage/OneDrive-ArizonaStateUniversity/pdoc_ASU/projects/NEON/Neon_Rproject")
+
 suppressPackageStartupMessages({
     library(MicrobiotaProcess) 
+    library(brms)
     library(phyloseq)
     library(ggplot2)
     library(tidyverse) 
@@ -59,6 +62,8 @@ suppressPackageStartupMessages({
     library(purrr)
     library(gridExtra)
     library(geosphere)
+    library(ape)
+    library(phangorn)
 })
 ```
 
@@ -135,13 +140,38 @@ ps <- physeq %>%
 sample_names(ps) <- sample_data(ps)$labtracking
 
 ps_otu <- otu_table(ps)
+sort(rowSums(t(ps_otu)))
 
 ps_bc_dist   <- vegdist(t(ps_otu), method = "bray") 
-ps_sor_dist  <- vegdist(ps_otu, method = "bray", binary = TRUE)
+ps_sor_dist  <- vegdist(t(ps_otu), method = "bray", binary = TRUE)
 
 meta <- data.frame(sample_data(ps))
 meta$decimalLatitude <- as.numeric(meta$decimalLatitude)
 meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
+```
+
+general stats
+```{r}
+total_asvs <- ntaxa(ps)
+cat("Total number of ASVs:", total_asvs, "\n\n")
+
+# Agglomerate at Phylum level
+ps_phylum <- tax_glom(ps, taxrank = "Phylum")
+
+# Transform to relative abundance
+ps_phylum_rel <- transform_sample_counts(ps_phylum, 
+                                         function(x) x / sum(x) * 100)
+
+# Melt to dataframe
+phylum_df <- psmelt(ps_phylum_rel)
+
+# Calculate mean % abundance per region per phylum
+phylum_summary <- phylum_df %>%
+  group_by(Phylum) %>%
+  summarise(mean_percent = mean(Abundance), .groups = "drop")
+
+print(phylum_summary)
+
 ```
 
 % shared ASV
@@ -207,6 +237,10 @@ ggplot(shared_df, aes(x = Comparison, y = PercentShared, fill = Comparison)) +
     x = NULL,
     y = "Percent shared ASVs"
   ) +
+  scale_fill_manual(values = c(
+    "#6B8FB3",
+    "#A0775A",
+    "#D55E00" ))+
   guides(fill = "none")
 ```
 
@@ -302,7 +336,7 @@ rownames(geo_dist) <- rownames(meta)
 colnames(geo_dist) <- rownames(meta)
 ```
 
-from gabri
+from gabri for alpha stats
 ```{r}
 otu <- t(otu_table(ps))
 
@@ -317,11 +351,28 @@ unique(rownames(otu_sorted) == metadata_filtered_sorted$labtracking) # OK
 metadata_filtered_sorted$Richness.rar<-specnumber(otu_sorted) # Counts otu number
 metadata_filtered_sorted$Shannon.rar<-vegan::diversity(otu_sorted, index="shannon") ## calculate Shannon H
 
-a = ggplot(metadata_filtered_sorted, aes(x = land_use_location, y = Richness.rar, color = stateProvince)) +
+wilcox.test(Shannon.rar ~ Region, data = metadata_filtered_sorted)
+
+min_richness <- min(metadata_filtered_sorted$Richness.rar)
+max_richness <- max(metadata_filtered_sorted$Richness.rar)
+
+cat("Richness range per sample (Observed ASVs):\n")
+cat("Min:", min_richness, "\n")
+cat("Max:", max_richness, "\n\n")
+
+# Statistical test (Kruskal-Wallis recommended for richness)
+kruskal_richness <- kruskal.test(Richness.rar ~ Region, data = metadata_filtered_sorted)
+print(kruskal_richness)
+
+
+a = ggplot(metadata_filtered_sorted, aes(x = Region, y = Richness.rar, color = Region)) +
   geom_boxplot(outlier.shape = NA) +
   geom_point(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.8), alpha = 0.7) +
   theme_classic() +
-  labs(y = "Number of otus", x = "Mississippi River Split") +
+  labs(y = "Number of ASVs", x = "Region") +
+  scale_color_manual(values = c(
+    "#6B8FB3",
+    "#D55E00" ))+
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 a
 ```
@@ -330,7 +381,6 @@ Beta diversity
 ```{r}
 set.seed(12)
 bac.dist<-vegdist(otu_sorted, method="bray") ### this calculates BC dissimilaries
-bac.dist.sor<-vegdist(otu_sorted, method="bray", binary  = TRUE ) ### this calculates Sorensen dissimilaries
 
 set.seed(12)
 bac.nmds<-metaMDS(bac.dist, k=2, try=999)
@@ -352,11 +402,22 @@ bac_nmds <- ggplot(meta, aes(x = Axis01, y = Axis02)) +
 bac_nmds
 ```
 
+dbmem
+#there is spatial autocorrelation 
+```{r}
+dbrda1<- dbrda(ps_bc_dist ~ decimalLatitude + decimalLongitude + Region, data = meta, distance = "bray")
+
+
+anova1<-anova(dbrda1, by="margin", permutation = 9999)
+anova1
+```
+
 Bayesian Generalized (Non-)Linear Multivariate Multilevel Models
 ```{r}
 #### Create metadata -------------
-geo_dist
-ps_bc_dist
+#geo_dist
+#ps_bc_dist
+#ps_sor_dist
 
 melted_BC <- reshape2::melt(as.matrix(ps_bc_dist), varnames = c("Sample1", "Sample2"), value.name = "BC_Dissimilarity")
 
@@ -367,11 +428,11 @@ unique(melted_BC$Sample2 == melted_geo$Sample2) # Ok
 
 #### Reshape
 melted_diffs = melted_geo
-melted_diffs$BC_dissimilarity = melted_BC$BC_Dissimilarity
+melted_diffs$BC_Dissimilarity = melted_BC$BC_Dissimilarity
 
 ### convert into similarity
 #melted_diffs$geo_Similarity = 1 - melted_diffs$geo_Dissimilarity
-melted_diffs$BC_Similarity = 1 - melted_diffs$BC_dissimilarity
+melted_diffs$BC_Similarity = 1 - melted_diffs$BC_Dissimilarity
 
 #### remove half of the dataset
 melted_diffs <- melted_diffs %>%
@@ -395,29 +456,98 @@ range.use <- function(x,min.use,max.use){ (x - min(x,na.rm=T))/(max(x,na.rm=T)-m
 
 melted_diffs$dist_scaled <- range.use(melted_diffs$geo_Distance, 0, 1)
 
-ggplot(melted_diffs, aes(x=geo_Distance, y=BC_Similarity, color = same_region)) +
-  geom_point()
+summary(melted_diffs$geo_Distance, by = same_region)
 
-library(brms)
-model <- brm(BC_Similarity~1+dist_scaled * same_region +
-            (1|mm(Sample1,Sample2)),
-              data = melted_diffs,
-              #family= "Beta",
-              warmup = 2000, iter = 6000,
-              threads = threading(6),
-              cores = 24,
-              chains = 4,
-              control=list(adapt_delta=0.95),
-              init=0)
+#slope = change in similarity per 1 SD of 100 km distances
+
+#With z-scores:
+#mean ≈ 0 in East and West
+#sd ≈ 1 in each region
+#which is much closer to a biological decay rate.
+melted_diffs <- melted_diffs %>%
+  #group_by(same_region) %>%
+  mutate(
+    dist_100 = geo_Distance / 100,
+    dist_z = as.numeric(scale(dist_100))
+  ) %>%
+  ungroup()
+
+ggplot(melted_diffs, aes(x=dist_z, y=BC_Similarity, color = same_region)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+#library(brms)
+
+#model <- brm(BC_Similarity~1+dist_scaled * same_region +
+#            (1|mm(Sample1,Sample2)),
+#              data = melted_diffs,
+#              #family= "Beta",
+#              warmup = 2000, iter = 6000,
+#              threads = threading(6),
+#              cores = 24,
+#              chains = 4,
+#              control=list(adapt_delta=0.95),
+#              init=0)
+
+#cor(melted_diffs$dist_scaled, as.numeric(melted_diffs$same_region))
+
+#Scale distance within region
+#Use || for random slopes
+#Add priors + increase adapt_delta
+
+# || removes slope–intercept correlation
+#within-region scaling removes confounding
+#priors regularize weakly identified slopes
+#distance is still biologically meaningful
+
+#model <- brm(
+#  BC_Similarity ~ 1 + dist_z +
+#    (1 + dist_z || same_region) +
+#    (1 | mm(Sample1, Sample2)),
+#  data = melted_diffs,
+  
+#  prior = c(
+#    prior(normal(0, 1), class = "b"),
+#    prior(normal(0, 1), class = "sd")
+#  ),
+
+#  warmup = 2000, iter = 6000,
+#  chains = 4,
+#  cores = 24,
+#  threads = threading(6),
+#  control = list(
+#    adapt_delta = 0.99,
+#    max_treedepth = 15
+#  )
+#)
+
+#You’ll get:
+#distance–decay slope for within-region pairs
+#distance–decay slope for across-region pairs
+
+#If:
+#slopes differ → region-specific decay
+#slopes similar but intercepts differ → Mississippi as a barrier
+#across-region slope = 0 → distance irrelevant once region differs
+
+
+model <- brm(BC_Similarity ~ dist_z + same_region + dist_z:same_region + (1 | mm(Sample1, Sample2)),
+             data = melted_diffs, 
+             #prior = c(prior(normal(0, 1), class = "b"), prior(normal(0, 1), class = "sd")),
+
+             warmup = 2000, iter = 6000,
+             chains = 4,
+             cores = 24,
+             threads = threading(6),
+             control = list(adapt_delta = 0.99,max_treedepth = 15))
 
 summary(model)
 ```
 
 
-
 vignette used for code chunks below: https://bioconductor.org/packages/release/bioc/vignettes/MicrobiotaProcess/inst/doc//MicrobiotaProcess.html
 
-Rarefied species richness
+Rare Abundance curve
 ```{r}
 mpse_samples_filtered %<>% mp_rrarefy()
 
@@ -478,96 +608,6 @@ f2 <- mpse_samples_filtered %>%
       )
 
 f1 / f2
-```
-
-visualization of taxonomy abundance
-```{r}
-mpse_samples_filtered %<>%
-    mp_cal_abundance( # for each samples
-      .abundance = RareAbundance
-    ) %>%
-    mp_cal_abundance( # for each groups 
-      .abundance=RareAbundance,
-      .group=Region
-    )
-
-# visualize the relative abundance of top 20 phyla for each sample.
-p1 <- mpse_samples_filtered %>%
-         mp_plot_abundance(
-           .abundance=RareAbundance,
-           .group=Region, 
-           taxa.class = Phylum, 
-           topn = 20,
-           relative = TRUE
-         )
-# visualize the abundance (rarefied) of top 20 phyla for each sample.
-p2 <- mpse_samples_filtered %>%
-          mp_plot_abundance(
-            .abundance=RareAbundance,
-            .group=Region,
-            taxa.class = Phylum,
-            topn = 20,
-            relative = FALSE
-          )
-p1
-p2
-
-
-h1 <- mpse_samples_filtered %>%
-         mp_plot_abundance(
-           .abundance = RareAbundance,
-           .group = Region,
-           taxa.class = Phylum,
-           relative = TRUE,
-           topn = 20,
-           geom = 'heatmap',
-           features.dist = 'euclidean',
-           features.hclust = 'average',
-           sample.dist = 'bray',
-           sample.hclust = 'average'
-         )
-
-h2 <- mpse_samples_filtered %>%
-          mp_plot_abundance(
-            .abundance = RareAbundance,
-            .group = Region,
-            taxa.class = Phylum,
-            relative = FALSE,
-            topn = 20,
-            geom = 'heatmap',
-            features.dist = 'euclidean',
-            features.hclust = 'average',
-            sample.dist = 'bray',
-            sample.hclust = 'average'
-          )
-# the character (scale or theme) of figure can be adjusted by set_scale_theme
-# refer to the mp_plot_dist
-#aplot::plot_list(gglist=list(h1, h2), tag_levels="A")
-h1
-h2
-
-# visualize the relative abundance of top 20 phyla for each .group (time)
-p3 <- mpse_samples_filtered %>%
-         mp_plot_abundance(
-            .abundance=RareAbundance, 
-            .group=Region,
-            taxa.class = Phylum,
-            topn = 20,
-            plot.group = TRUE
-          )
-
-# visualize the abundance of top 20 phyla for each .group (time)
-p4 <- mpse_samples_filtered %>%
-          mp_plot_abundance(
-             .abundance=RareAbundance,
-             .group= Region,
-             taxa.class = Phylum,
-             topn = 20,
-             relative = FALSE,
-             plot.group = TRUE
-           )
-p3
-p4
 ```
 
 Beta diversity analysis
@@ -808,10 +848,6 @@ grid.arrange(p1, p2, ncol = 2)
 #### Plot the tanglegram with the expanded tree --------------------------------
 note: this phylosymbosis
 ```{r}
-library(ape)
-library(phangorn)
-library(TreeSearch)
-
 # Convert hclust to phylo
 hc <- hclust(mpse_sor_dist, method = "average")
 tree <- as.phylo(hc)
@@ -903,19 +939,6 @@ plot(phymap,
      colors = tip_colors,
      xlim = c(-130, -65),
      ylim = c(24, 50))
-
-# Add jackknife support values at internal nodes
-# Only do this if your tree has node labels
-if(!is.null(tree_clado$node.label)) {
-  nodelabels(
-    text = tree_clado$node.label,
-    node = 1:tree_clado$Nnode + Ntip(tree_clado),  # internal nodes start after tips
-    frame = "none",
-    adj = c(1, -0.2),
-    cex = 0.7,
-    col = "black"
-  )
-}
 ```
 
 codiversity attempt 
@@ -1189,16 +1212,17 @@ ggplot() +
 
 ```
 
-top 20 Genus 
+top 20 
 ```{r}
-ps_genus <- tax_glom(ps, taxrank = "Species")
+colnames(tax_table(ps))
+ps_genus <- tax_glom(ps, taxrank = "Genus")
 
 # Remove uncultured / unclassified / unidentified taxa
 ps_genus <- subset_taxa(
   ps_genus,
   !grepl(
     "uncultured|unclassified|unidentified|unknown",
-    Species,
+    Genus,
     ignore.case = TRUE
   )
 )
@@ -1208,10 +1232,10 @@ top20 <- names(sort(taxa_sums(ps_genus_rel), decreasing = TRUE))[1:30]
 ps_top20 <- prune_taxa(top20, ps_genus_rel)
 ```
 
-top 20 families PCoA with individuals as points
+top 20 PCoA with individuals as points
 ```{r}
 # Step 1: Get all Families 
-families <- unique(as.vector(tax_table(ps_top20)[, "Species"]))
+families <- unique(as.vector(tax_table(ps_top20)[, "Genus"]))
 families <- families[!is.na(families)]
 
 
@@ -1222,7 +1246,7 @@ axis_labels <- list()
 for (fam in families) {
 
   # Subset by Family
-  ps_sub <- subset_taxa(ps, Species == fam)
+  ps_sub <- subset_taxa(ps, Genus == fam)
 
   # Remove empty samples
   ps_sub <- prune_samples(sample_sums(ps_sub) > 0, ps_sub)
@@ -1256,8 +1280,107 @@ for (fam in families) {
     Sample = rownames(sample_df),
     PC1    = pcoa_res$vectors[, 1],
     PC2    = pcoa_res$vectors[, 2],
+    land_use = sample_df$land_use,
     Region = sample_df$Region,
-    Family = fam
+    Genus = fam
+  )
+
+  # Store facet title
+  axis_labels[[fam]] <- data.frame(
+    Genus = fam,
+    title  = paste0(
+      fam,
+      "\nPC1 (", var_exp[1], "%) | PC2 (", var_exp[2], "%)"
+    )
+  )
+
+  pcoa_list[[fam]] <- pcoa_df
+}
+
+# Combine results
+combined_pcoa <- bind_rows(pcoa_list)
+axis_labels   <- bind_rows(axis_labels)
+
+combined_pcoa <- combined_pcoa %>%
+  left_join(axis_labels, by = "Genus") %>%
+  mutate(title = factor(title, levels = unique(title)))
+
+# Step 3: Plot
+ggplot(
+  combined_pcoa,
+  aes(PC1, PC2, color = Region)
+) +
+  geom_point(size = 3, alpha = 0.8) +
+  stat_ellipse(
+    aes(group = Region),
+    level = 0.95,
+    linetype = 2,
+    na.rm = TRUE
+  ) +
+  facet_wrap(~ title, scales = "free") +
+  scale_color_manual(values = east_west_colors) +
+  theme_bw()
+
+```
+
+with abundance 
+```{r}
+# Step 1: Get all Families 
+families <- unique(as.vector(tax_table(ps_top20)[, "Species"]))
+families <- families[!is.na(families)]
+
+# Step 2: Prepare containers
+pcoa_list   <- list()
+axis_labels <- list()
+
+for (fam in families) {
+
+  # Subset by Species
+  ps_sub <- subset_taxa(ps, Species == fam)
+
+  # Remove empty samples
+  ps_sub <- prune_samples(sample_sums(ps_sub) > 0, ps_sub)
+
+  # Skip if too few samples
+ if (length(sample_names(ps_sub)) < 3) next
+
+  # -------------------------
+  # Get abundance per sample
+  # -------------------------
+  abundance <- sample_sums(ps_sub)
+
+  # Distance matrix
+  dist_mat <- tryCatch(
+    phyloseq::distance(ps_sub, method = "bray"),
+    error = function(e) NULL
+  )
+  if (is.null(dist_mat)) next
+
+  # PCoA
+  pcoa_res <- tryCatch(
+    ape::pcoa(dist_mat),
+    error = function(e) NULL
+  )
+  if (is.null(pcoa_res)) next
+
+  # Variance explained
+  var_exp <- round(
+    100 * pcoa_res$values$Relative_eig[1:2],
+    1
+  )
+  if (any(is.na(var_exp))) next
+
+  # Sample metadata
+  sample_df <- data.frame(sample_data(ps_sub))
+
+  # PCoA dataframe (ADD abundance)
+  pcoa_df <- data.frame(
+    Sample    = rownames(sample_df),
+    PC1       = pcoa_res$vectors[, 1],
+    PC2       = pcoa_res$vectors[, 2],
+    Region    = sample_df$Region,
+    Abundance = abundance[rownames(sample_df)],
+    Family    = fam
   )
 
   # Store facet title
@@ -1278,25 +1401,51 @@ axis_labels   <- bind_rows(axis_labels)
 
 combined_pcoa <- combined_pcoa %>%
   left_join(axis_labels, by = "Family") %>%
-  mutate(title = factor(title, levels = unique(title)))
+  mutate(title = factor(title, levels = unique(title))) 
+
+combined_pcoa <- combined_pcoa %>%
+  mutate(Abundance_log = log10(Abundance + 1))
 
 # Step 3: Plot
 ggplot(
   combined_pcoa,
-  aes(PC1, PC2, color = Region, shape = Region)
+  aes(PC1, PC2,
+      color = Region,
+      shape = Region,
+      size  = Abundance)
 ) +
-  geom_point(size = 3, alpha = 0.8) +
+  geom_point(alpha = 0.75) +
   stat_ellipse(
     aes(group = Region),
     level = 0.95,
     linetype = 2,
+    linewidth = 0.6,
     na.rm = TRUE
   ) +
   facet_wrap(~ title, scales = "free") +
   scale_color_manual(values = east_west_colors) +
-  theme_bw()
+  
+  # Cleaner size scaling
+  scale_size_continuous(
+    range = c(2, 7),
+    breaks = pretty(combined_pcoa$Abundance, n = 4),
+    name = "Abundance"
+  ) +
+  
+  guides(
+    size = guide_legend(
+      override.aes = list(alpha = 1)
+    )
+  ) +
+  
+  theme_bw(base_size = 12) +
+  theme(
+    legend.position = "right",
+    strip.text = element_text(face = "bold")
+  )
 
 ```
+
 
 top 20 families distance decay plots
 ```{r}
@@ -1404,8 +1553,8 @@ library(maaslin3)
 #nrow(otu_by_taxon) # ok
 #unique(colnames(otu_by_taxon) == gps$labtracking) # ok
 #otu_by_taxon = as.data.frame(otu_by_taxon)
-ps_genus <- tax_glom(ps, taxrank = "Species")
-otu <-as(otu_table(ps), "matrix")
+ps_genus <- tax_glom(ps, taxrank = "Genus")
+otu <-as(otu_table(ps_genus), "matrix")
 
 
 # Factor the categorical variables to test
@@ -1423,7 +1572,7 @@ set.seed(1)
 fit_out <- maaslin3(input_data = otu,
                     input_metadata = meta,
                     output = 'hmp2_output',
-                    formula = '~ Region*geo_km',
+                    formula = '~ Region',
                     normalization = 'TSS',
                     transform = 'LOG',
                     augment = TRUE,
