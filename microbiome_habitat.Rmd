@@ -82,8 +82,8 @@ habitat_colors <- c(
 )
   
 east_west_colors <- c(
-  "east" = "#6B8FB3",  # muted steel blue
-  "west" = "#D55E00"   # muted warm tan
+  "east" = "#5ab4ac",  # muted steel blue
+  "west" = "#d8b365"   # muted warm tan
 )
 
 ```
@@ -148,6 +148,97 @@ ps_sor_dist  <- vegdist(t(ps_otu), method = "bray", binary = TRUE)
 meta <- data.frame(sample_data(ps))
 meta$decimalLatitude <- as.numeric(meta$decimalLatitude)
 meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
+```
+
+ANCOMBC
+```{r}
+if (!require("ANCOMBC", quietly = TRUE)){
+       BiocManager::install("ANCOMBC")}
+
+if (!require("microbiome", quietly = TRUE)){
+       BiocManager::install("microbiome")}
+
+library(ANCOMBC)
+library(microbiome)
+
+# Remove uncultured / unclassified / unidentified taxa
+ps2 <- subset_taxa(
+  ps,
+  !grepl(
+    "uncultured|unclassified|unidentified|unknown",
+    Species,
+    ignore.case = TRUE
+  )
+)
+
+out = ancombc(data = ps2, formula = "Region", p_adj_method = "fdr")
+
+results_ancom_bc = data.frame(ASV = out$res$lfc$taxon,
+                              lcf = out$res$lfc$Regionwest, 
+                              W = out$res$W$Regionwest, 
+                              p_val = out$res$p_val$Regionwest, 
+                              q_value = out$res$q_val$Regionwest, 
+                              Diff_ab =  out$res$diff_abn$Regionwest)
+results_ancom_bc$lcf = results_ancom_bc$lcf * -1
+
+results_ancom_bc$association = ifelse(results_ancom_bc$p_val < 0.05 & results_ancom_bc$lcf > 0, "east", "Not singificant")
+results_ancom_bc$association = ifelse(results_ancom_bc$p_val < 0.05 & results_ancom_bc$lcf < 0, "west",results_ancom_bc$association)
+
+ggplot(results_ancom_bc, aes(x = as.numeric(lcf), y = -log10(as.numeric(p_val)), color = association)) +
+  geom_point() +
+  labs(x = "Log2 Fold Change", y = "-log10(p-value)",
+       title = "Volcano Plot") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw()
+
+
+TAXtab =as.data.frame(tax_table(ps2))
+
+name_tmp = sprintf("ASV%s",seq(1:nrow(TAXtab))) 
+#now let's add some information to this. For example, we want to add the genus, and if not available, the last taxonomic information available.
+TAXtab$name =  TAXtab$Species
+TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Genus, TAXtab$name)
+TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Family, TAXtab$name)
+TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Order, TAXtab$name)
+TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Class, TAXtab$name)
+TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Phylum, TAXtab$name)
+unique(is.na(TAXtab$name)) # Ok, we have all names
+
+TAXtab$name = paste(name_tmp, TAXtab$name, sep = "-")
+TAXtab$name[1:10] # ok it looks good.
+
+results_ancom_bc$name = TAXtab$name[match(results_ancom_bc$ASV ,rownames(TAXtab))]
+
+results_sig = results_ancom_bc[results_ancom_bc$p_val < 0.05,]
+table(results_sig$association)
+
+Sum_abundance= colSums(decostand(t(ps_otu), method = "total"))
+results_sig$sum_abundance = Sum_abundance[match(results_sig$ASV, names(Sum_abundance))]
+results_sig = results_sig[order(results_sig$sum_abundance, decreasing = TRUE),]
+results_sig = results_sig[1:14,]
+results_sig$name = factor(results_sig$name, levels = rev(results_sig$name))
+
+a = ggplot(results_sig, aes(lcf, name, color = association ))+
+  geom_point() +theme_bw() +
+  geom_segment( aes(x=0, xend=lcf, y=name, yend=name, color = association)) +
+  geom_vline(xintercept = 0, size=0.3) +xlab("log2FoldChange") +ylab(NULL) +
+  theme_bw() +
+  scale_color_manual(values = c("east" = "#5ab4ac","west" = "#d8b365"))
+  
+a
+
+ASVtab_rel = decostand(t(ps_otu), method = "total")
+AASVtab_sig = data.frame(ASVtab_rel[,as.numeric(rownames(results_sig))])
+colnames(AASVtab_sig) = results_sig$name
+AASVtab_sig$Region = meta$Region
+melted = reshape2::melt(AASVtab_sig, values = "Region")
+melted$variable = factor(melted$variable, levels = rev(results_sig$name))
+
+b = ggplot(melted, aes(value, variable, fill = Region)) +
+  geom_boxplot(outlier.size = 0.5) + theme_bw() + xlab("Relative abundance") +
+    theme( axis.text.y=element_blank()) + ylab(NULL)
+
+b 
 ```
 
 general stats
@@ -223,25 +314,32 @@ shared_df$Comparison <- factor(
   )
 )
 
+summary <- shared_df %>%
+  group_by(Comparison) %>%
+  summarise(mean_percent = mean(PercentShared), .groups = "drop")
+
+print(summary)
+
 # 6. Plot
 ggplot(shared_df, aes(x = Comparison, y = PercentShared, fill = Comparison)) +
-  geom_violin(outlier.shape = NA) +
+  geom_violin(trim = FALSE) +
   geom_jitter(width = 0.15, alpha = 0.3, size = 1) +
-  #scale_fill_manual(values = c(
-  #  "Within state" = "#6B8FB3",
-  #  "Between states (same region)" = "#A0775A",
-  #  "Between regions (East vs West)" = "#D55E00"
-  #)) +
   theme_bw() +
   labs(
     x = NULL,
     y = "Percent shared ASVs"
   ) +
   scale_fill_manual(values = c(
-    "#6B8FB3",
-    "#A0775A",
-    "#D55E00" ))+
-  guides(fill = "none")
+    "#bababa",
+    "#9C68AE",
+    "#D85F64"
+  )) +
+  guides(fill = "none") +
+  theme(
+    axis.title.y = element_text(size = 16),
+    axis.text.x  = element_text(size = 14),
+    axis.text.y  = element_text(size = 14)
+  )
 ```
 
 rasters and such
@@ -364,15 +462,18 @@ cat("Max:", max_richness, "\n\n")
 kruskal_richness <- kruskal.test(Richness.rar ~ Region, data = metadata_filtered_sorted)
 print(kruskal_richness)
 
+summary <- metadata_filtered_sorted %>%
+  group_by(Region) %>%
+  summarise(mean_percent = mean(Richness.rar), .groups = "drop")
 
-a = ggplot(metadata_filtered_sorted, aes(x = Region, y = Richness.rar, color = Region)) +
-  geom_boxplot(outlier.shape = NA) +
+print(summary)
+
+a = ggplot(metadata_filtered_sorted, aes(x = Region, y = Richness.rar, fill = Region)) +
+  geom_boxplot() +
   geom_point(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.8), alpha = 0.7) +
   theme_classic() +
   labs(y = "Number of ASVs", x = "Region") +
-  scale_color_manual(values = c(
-    "#6B8FB3",
-    "#D55E00" ))+
+  scale_fill_manual(values = east_west_colors)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 a
 ```
@@ -472,9 +573,44 @@ melted_diffs <- melted_diffs %>%
   ) %>%
   ungroup()
 
-ggplot(melted_diffs, aes(x=dist_z, y=BC_Similarity, color = same_region)) +
-  geom_point() +
-  geom_smooth(method = "lm")
+#install.packages("ggnewscale")  # once
+library(ggnewscale)
+
+#install.packages("colorspace")  # once
+library(colorspace)
+line_colors <- c("TRUE" = "#762a83",
+                 "FALSE"  = "#b2182b")
+
+#line_colors <- darken(base_colors, 0.3)
+base_colors <- lighten(line_colors, 0.3 )
+ggplot(melted_diffs, aes(x = geo_Distance, y = BC_Similarity)) +
+
+  # Points (light colors)
+  geom_point(aes(color = same_region), size = 2) +
+  scale_color_manual(values = base_colors, guide = "none") +
+
+  ggnewscale::new_scale_color() +
+
+  # Lines (darker colors)
+  geom_smooth(aes(color = same_region),
+              method = "lm",
+              se = FALSE,
+              linewidth = 1.2) +
+  scale_color_manual(values = line_colors) +
+
+  theme_bw() +
+    labs(
+    x = "Distance (km)",
+    y = "Bray– Curtis Similarity",
+    color = "Same Regions"
+  ) +
+
+  theme(
+    axis.title = element_text(size = 13),
+    axis.text  = element_text(size = 11),
+    legend.title = element_text(size = 12),
+    legend.text  = element_text(size = 11)
+  )
 
 #library(brms)
 
@@ -531,7 +667,7 @@ ggplot(melted_diffs, aes(x=dist_z, y=BC_Similarity, color = same_region)) +
 #across-region slope = 0 → distance irrelevant once region differs
 
 
-model <- brm(BC_Similarity ~ dist_z + same_region + dist_z:same_region + (1 | mm(Sample1, Sample2)),
+model <- brm(sor_Similarity ~ dist_z + same_region + dist_z:same_region + (1 | mm(Sample1, Sample2)),
              data = melted_diffs, 
              #prior = c(prior(normal(0, 1), class = "b"), prior(normal(0, 1), class = "sd")),
 
@@ -622,13 +758,13 @@ p2
 
 p3 <- mpse_samples_filtered %>% mp_plot_dist(.distmethod = bray, .group = Region, group.test=T, textsize=2) +
   scale_fill_manual(values = c(
-    "#6B8FB3",
-    "#A0775A",
-    "#D55E00" ))+
+    "#5ab4ac",
+    "#8c510a",
+    "#d8b365" ))+
   scale_color_manual(values = c(
-    "#6B8FB3",
-    "#A0775A",
-    "#D55E00" ))
+    "#5ab4ac",
+    "#8c510a",
+    "#d8b365" ))
 
  p3 
 ```
@@ -656,7 +792,7 @@ p1 <- mpse_samples_filtered %>%
           .group = Region, 
           .color = Region, 
           .starshape = Region,
-          .size = 1.2,
+          .size = 3,
           .alpha = 1,
           ellipse = TRUE,
           show.legend = F # don't display the legend of stat_ellipse
@@ -835,9 +971,9 @@ p1 <- ggplot(df_with_zeros, aes(x = x, y = y)) +
 # Plot without zeros
 p2 <- ggplot(df_no_zeros, aes(x = x, y = y)) +
   geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", col = "red") +
+  geom_smooth(method = "lm", col = "#8c510a") +
   labs(
-    x = "physical distance no same state compairsons",
+    x = "Geograohic distance",
     y = "Microbiome distance"
   ) +
   theme_minimal()
@@ -921,6 +1057,8 @@ tip_colors <- palette[as.numeric(smoll_map$link_cols[match(tree$tip.label, gps$S
 tree_clado <- tree
 tree_clado$edge.length <- rep(1, length(tree$edge.length))
 
+
+
 # Convert phylo tree to map object
 phymap <- phylo.to.map(
   tree_clado,
@@ -930,13 +1068,17 @@ phymap <- phylo.to.map(
   regions = "USA"
 )
 
+cols<-setNames(sample(rainbow(n=Ntip(tree_clado))),
+    tree_clado$tip.label)
+
 # Plot the map
 plot(phymap,
      ftype = "off",
      fsize = 0.8,
      lty = "solid",
+     colors=cols,
      map.bg = "grey",
-     colors = tip_colors,
+     #colors = "#8c510a",
      xlim = c(-130, -65),
      ylim = c(24, 50))
 ```
@@ -1538,21 +1680,9 @@ https://github.com/biobakery/biobakery/wiki/maaslin3
 
 do this at the family and or spices level
 ```{r}
-library(maaslin3)
+install_github("biobakery/Maaslin2")
+library(Maaslin2)
 
-# Extract taxonomy counts 
-#Taxtab<-read_qza("data/microbiome/taxonomy.qza")$data %>% parse_taxonomy()
-
-### Let's try aggrergating to species ---------------------
-#Taxtab$lowest_taxon <- apply(Taxtab, 1, function(x) tail(na.omit(x), 1))
-#otu_by_taxon <- as.data.frame(ps_otu)
-#otu_by_taxon$taxon <- Taxtab[rownames(ps_otu), "lowest_taxon"]
-#otu_by_taxon <- aggregate(. ~ taxon, data = otu_by_taxon, sum)
-#otu_by_taxon <- otu_by_taxon %>%
-#  column_to_rownames(var = "taxon")
-#nrow(otu_by_taxon) # ok
-#unique(colnames(otu_by_taxon) == gps$labtracking) # ok
-#otu_by_taxon = as.data.frame(otu_by_taxon)
 ps_genus <- tax_glom(ps, taxrank = "Genus")
 otu <-as(otu_table(ps_genus), "matrix")
 
@@ -1567,11 +1697,10 @@ meta$land_use <- factor(meta$land_use, levels = c('Grassland/Herbaceous',
                                                   "Deciduous Forest",
                                                   "Mixed Forest"))
 
-
 set.seed(1)
-fit_out <- maaslin3(input_data = otu,
+fit_out <- maaslin3(input_data = t(otu),
                     input_metadata = meta,
-                    output = 'hmp2_output',
+                    output = 'm2_output',
                     formula = '~ Region',
                     normalization = 'TSS',
                     transform = 'LOG',
@@ -1584,5 +1713,6 @@ fit_out <- maaslin3(input_data = otu,
                     median_comparison_prevalence = F,
                     max_pngs = 250,
                     cores = 1)
+
 
 ```
