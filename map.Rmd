@@ -59,8 +59,8 @@ p1 <- vect(points, geom = c("decimalLongitude", "decimalLatitude"), crs = "+proj
 points_sf <- st_as_sf(p1)  
 # points_sf now keeps all columns from `points` automatically
 
-colors_points <- c("black", "black")
-colors_rivers <- c("#ADC491","#2B99B1", "#2CBA91","#EACB2B", "#36A4AB","#E78F0A","#D55E00")
+colors_points <- c("#d8b365","#5ab4ac")
+colors_rivers <- c("black","black", "black","black", "black","black","black")
 
 points_colors <- setNames(
   rep(colors_points, length.out = length(unique(points_sf$Mississippi_River_Label))),
@@ -79,7 +79,7 @@ ggplot() +
   geom_sf(data = points_sf, aes(color = as.factor(Mississippi_River_Label)), size = 2) +  # Add points
   #labs(title = "Mississippi River and Main Tributaries (Lower 48 States)") +
   theme_minimal() +
-  scale_fill_gradient(high = "lightgrey", low = "#555",  na.value='transparent')+
+  scale_fill_gradient(high = "#C0C0C0", low = "#404040",  na.value='transparent')+
   scale_color_manual(values = c(points_colors, rivers_colors))+
   theme(legend.position = "none")+
     annotation_scale(location = "bl", width_hint = 0.5) +
