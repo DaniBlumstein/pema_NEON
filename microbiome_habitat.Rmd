@@ -150,6 +150,25 @@ meta$decimalLatitude <- as.numeric(meta$decimalLatitude)
 meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
 ```
 
+geographic distance
+```{r}
+# -----------------------------
+# Geographic distance
+# -----------------------------
+#distance from a centroid
+coords <- as.matrix(meta[, c("decimalLongitude", "decimalLatitude")])
+centroid <- colMeans(coords, na.rm = TRUE)
+meta$geo_km <- distVincentyEllipsoid(coords, centroid) / 1000
+
+#or 
+
+#distance in a matrix
+coords2 <- meta[, c("decimalLongitude", "decimalLatitude")]
+geo_dist <- distm(coords2, fun = distHaversine) / 1000 
+rownames(geo_dist) <- rownames(meta) 
+colnames(geo_dist) <- rownames(meta)
+```
+
 ANCOMBC
 ```{r}
 if (!require("ANCOMBC", quietly = TRUE)){
@@ -240,6 +259,177 @@ b = ggplot(melted, aes(value, variable, fill = Region)) +
 
 b 
 ```
+
+```{r}
+TAXtab <- as.data.frame(tax_table(ps))
+
+name_tmp <- sprintf("ASV%s", seq_len(nrow(TAXtab)))
+
+# choose lowest available taxonomy
+TAXtab$name <- TAXtab$Species
+TAXtab$name <- ifelse(is.na(TAXtab$name), TAXtab$Genus, TAXtab$name)
+TAXtab$name <- ifelse(is.na(TAXtab$name), TAXtab$Family, TAXtab$name)
+TAXtab$name <- ifelse(is.na(TAXtab$name), TAXtab$Order, TAXtab$name)
+TAXtab$name <- ifelse(is.na(TAXtab$name), TAXtab$Class, TAXtab$name)
+TAXtab$name <- ifelse(is.na(TAXtab$name), TAXtab$Phylum, TAXtab$name)
+
+unique(is.na(TAXtab$name))  # should be FALSE
+
+# add ASV id
+TAXtab$name <- paste(name_tmp, TAXtab$name, sep = "-")
+
+taxa_names(ps) <- TAXtab$name
+
+#ps_genus <- tax_glom(ps, taxrank = "Phylum")
+ps <- filter_taxa(ps, function(x) sum(x > 0) >= 10, TRUE)
+ps <- filter_taxa(ps, function(x) sum(x) > 500, TRUE)
+
+otu <- as(otu_table(ps), "matrix")
+tax <- as.data.frame(tax_table(ps))
+
+genus_results <- data.frame()
+
+for(i in 1:nrow(otu)){
+
+  g <- rownames(tax)[i]
+
+  counts <- otu[i, , drop = FALSE]
+
+  if(sum(counts) == 0) next
+
+  bc <- vegdist(t(ps_otu), method = "bray") 
+    #vegdist(t(ps_otu), method = "bray", binary = TRUE)
+
+  bc_df <- melt(as.matrix(bc),
+                varnames = c("Sample1","Sample2"),
+                value.name = "BC_Dissimilarity")
+
+  geo_df <- melt(as.matrix(geo_dist),
+                 varnames = c("Sample1","Sample2"),
+                 value.name = "geo_Distance")
+
+  df <- geo_df
+  df$BC_Similarity <- 1 - bc_df$BC_Dissimilarity
+
+  df <- df %>%
+    filter(Sample1 != Sample2) %>%
+    mutate(pair_min = pmin(as.character(Sample1), as.character(Sample2)),
+           pair_max = pmax(as.character(Sample1), as.character(Sample2))) %>%
+    distinct(pair_min, pair_max, .keep_all = TRUE)
+
+  model <- lm(BC_Similarity ~ geo_Distance, data = df)
+
+  genus_results <- rbind(
+    genus_results,
+    data.frame(
+      genus = g,
+      slope = coef(model)[2],
+      r2 = summary(model)$r.squared
+    )
+  )
+}
+
+head(genus_results)
+
+top_genera <- genus_results %>%
+  arrange(slope) %>%
+  dplyr::slice(1:12)
+
+top_names <- top_genera$genus
+
+plot_df <- data.frame()
+
+for(g in top_names){
+
+  ps_g <- prune_taxa(taxa_names(ps) == g, ps)
+
+  otu_g <- as(otu_table(ps_g), "matrix")
+
+  bc <- vegdist(t(otu_g), method = "bray")
+
+  melted_BC <- melt(as.matrix(bc),
+                    varnames = c("Sample1","Sample2"),
+                    value.name = "BC_Dissimilarity")
+
+  melted_geo <- melt(as.matrix(geo_dist),
+                     varnames = c("Sample1","Sample2"),
+                     value.name = "geo_Distance")
+
+  melted_diffs <- melted_geo
+  melted_diffs$BC_Similarity <- 1 - melted_BC$BC_Dissimilarity
+
+  #### remove half of the dataset
+  melted_diffs <- melted_diffs %>%
+    filter(Sample1 != Sample2) %>%
+    mutate(pair_min = pmin(as.character(Sample1), as.character(Sample2)),
+           pair_max = pmax(as.character(Sample1), as.character(Sample2))) %>%
+    distinct(pair_min, pair_max, .keep_all = TRUE) %>%
+    dplyr::select(Sample1, Sample2, geo_Distance, BC_Similarity)
+
+  # Create sample -> region map
+  region_map <- setNames(meta$Region, meta$labtracking)
+
+  # Assign regions
+  melted_diffs$region1 <- region_map[melted_diffs$Sample1]
+  melted_diffs$region2 <- region_map[melted_diffs$Sample2]
+
+  # Same region?
+  melted_diffs$same_region <- melted_diffs$region1 == melted_diffs$region2
+
+  # Scale geographic distance
+  range.use <- function(x,min.use,max.use){
+    (x - min(x,na.rm=T)) /
+    (max(x,na.rm=T)-min(x,na.rm=T)) *
+    (max.use - min.use) + min.use
+  }
+
+  melted_diffs$dist_scaled <- range.use(melted_diffs$geo_Distance, 0, 1)
+
+  # Optional summary
+  print(summary(melted_diffs$geo_Distance,
+                by = melted_diffs$same_region))
+
+  # Add genus label
+  melted_diffs$genus <- g
+
+  plot_df <- rbind(plot_df, melted_diffs)
+}
+
+line_colors <- c("TRUE" = "#762a83",
+                 "FALSE" = "#b2182b")
+
+base_colors <- colorspace::lighten(line_colors, 0.3)
+
+ggplot(plot_df,
+       aes(x = geo_Distance,
+           y = BC_Similarity)) +
+
+  geom_point(aes(color = same_region),
+             size = 1.5,
+             alpha = 0.5) +
+
+  scale_color_manual(values = base_colors, guide = "none") +
+
+  ggnewscale::new_scale_color() +
+
+  geom_smooth(aes(color = same_region),
+              method = "lm",
+              se = FALSE,
+              linewidth = 1) +
+
+  scale_color_manual(values = line_colors) +
+
+  facet_wrap(~genus, scales = "free_y") +
+
+  theme_bw() +
+
+  labs(
+    x = "Distance (km)",
+    y = "BC Similarity",
+    color = "Same Region"
+  )
+```
+
 
 general stats
 ```{r}
@@ -413,25 +603,6 @@ write.table(sample_data_df,
             quote = FALSE, 
             row.names = TRUE)
 
-```
-
-geographic distance
-```{r}
-# -----------------------------
-# Geographic distance
-# -----------------------------
-#distance from a centroid
-coords <- as.matrix(meta[, c("decimalLongitude", "decimalLatitude")])
-centroid <- colMeans(coords, na.rm = TRUE)
-meta$geo_km <- distVincentyEllipsoid(coords, centroid) / 1000
-
-#or 
-
-#distance in a matrix
-coords2 <- meta[, c("decimalLongitude", "decimalLatitude")]
-geo_dist <- distm(coords2, fun = distHaversine) / 1000 
-rownames(geo_dist) <- rownames(meta) 
-colnames(geo_dist) <- rownames(meta)
 ```
 
 from gabri for alpha stats
