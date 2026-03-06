@@ -260,8 +260,17 @@ b = ggplot(melted, aes(value, variable, fill = Region)) +
 b 
 ```
 
+dist decay by gen
 ```{r}
-TAXtab <- as.data.frame(tax_table(ps))
+ps2 <- subset_taxa(
+  ps,
+  !grepl(
+    "uncultured|unclassified|unidentified|unknown",
+    Species,
+    ignore.case = TRUE
+  )
+)
+TAXtab <- as.data.frame(tax_table(ps2))
 
 name_tmp <- sprintf("ASV%s", seq_len(nrow(TAXtab)))
 
@@ -278,27 +287,27 @@ unique(is.na(TAXtab$name))  # should be FALSE
 # add ASV id
 TAXtab$name <- paste(name_tmp, TAXtab$name, sep = "-")
 
-taxa_names(ps) <- TAXtab$name
+taxa_names(ps2) <- TAXtab$name
 
-#ps_genus <- tax_glom(ps, taxrank = "Phylum")
-ps <- filter_taxa(ps, function(x) sum(x > 0) >= 10, TRUE)
-ps <- filter_taxa(ps, function(x) sum(x) > 500, TRUE)
+ps_genus <- tax_glom(ps, taxrank = "Genus")
+ps3 <- filter_taxa(ps_genus, function(x) sum(x > 0) >= 10, TRUE)
+#ps4 <- filter_taxa(ps3, function(x) sum(x) > 500, TRUE)
 
-otu <- as(otu_table(ps), "matrix")
-tax <- as.data.frame(tax_table(ps))
+otu <- as(otu_table(ps3), "matrix")
+tax <- as.data.frame(tax_table(ps3))
 
 genus_results <- data.frame()
 
 for(i in 1:nrow(otu)){
 
-  g <- rownames(tax)[i]
+  #g <- rownames(tax)[i]
+  g <- tax$Genus[i]
 
   counts <- otu[i, , drop = FALSE]
 
   if(sum(counts) == 0) next
 
-  bc <- vegdist(t(ps_otu), method = "bray") 
-    #vegdist(t(ps_otu), method = "bray", binary = TRUE)
+  bc <- vegdist(t(otu), method = "bray", binary = TRUE)
 
   bc_df <- melt(as.matrix(bc),
                 varnames = c("Sample1","Sample2"),
@@ -341,11 +350,11 @@ plot_df <- data.frame()
 
 for(g in top_names){
 
-  ps_g <- prune_taxa(taxa_names(ps) == g, ps)
-
+  #ps_g <- prune_taxa(taxa_names(ps3) == g, ps3)
+  ps_g <- subset_taxa(ps3, Genus == g)
   otu_g <- as(otu_table(ps_g), "matrix")
 
-  bc <- vegdist(t(otu_g), method = "bray")
+  bc <- vegdist(t(otu_g), method = "bray", binary = TRUE)
 
   melted_BC <- melt(as.matrix(bc),
                     varnames = c("Sample1","Sample2"),
@@ -428,8 +437,167 @@ ggplot(plot_df,
     y = "BC Similarity",
     color = "Same Region"
   )
+
+ggplot(plot_df,
+       aes(x = BC_Similarity, fill = same_region)) +
+
+  geom_bar(
+    bins = 30,
+    alpha = 0.6,
+    #position = "identity"
+  ) +
+  scale_fill_manual(values = line_colors) +
+
+  facet_wrap(~genus, scales = "free_y") +
+
+  theme_bw() +
+
+  labs(
+    x = "Sor Similarity",
+    y = "Count",
+    fill = "Same region"
+  )
 ```
 
+```{r}
+# Extract abundance matrix
+otu <- as(otu_table(ps2), "matrix")
+
+# Ensure taxa are rows
+if(!taxa_are_rows(ps2)) {
+  otu <- t(otu)
+}
+
+# Add the new taxa names from TAXtab
+rownames(otu) <- TAXtab$name
+
+meta <- data.frame(sample_data(ps2))
+region <- meta$Region
+names(region) <- rownames(meta)
+
+rownames(annotation_col) <- rownames(meta)
+
+# Match sample order
+annotation_col <- annotation_col[colnames(otu), , drop = FALSE]
+
+top_taxa <- names(sort(rowSums(otu), decreasing = TRUE))[1:15]
+otu_top <- otu[top_taxa, ]
+
+otu_rel <- sweep(otu_top, 2, colSums(otu_top), "/")
+otu_log <- log10(otu_rel + 1e-6)
+
+otu_region <- aggregate(t(otu_rel), by = list(meta$Region), FUN = mean)
+rownames(otu_region) <- otu_region$Group.1
+otu_region <- t(otu_region[, -1])
+
+ha <- HeatmapAnnotation(
+  Region = region[colnames(otu_top)],
+  col = list(
+    Region = c(
+  "east" = "#5ab4ac",  # muted steel blue
+  "west" = "#d8b365"   # muted warm tan
+    )
+  )
+)
+Heatmap(
+  otu_top,
+  name = "log10 abundance",
+  top_annotation = ha,
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  row_names_gp = grid::gpar(fontsize = 7),
+  column_split = region[colnames(otu_top)]
+)
+
+# Extract abundance matrix
+otu <- as(otu_table(ps2), "matrix")
+
+# Ensure taxa are rows
+if(!taxa_are_rows(ps2)) {
+  otu <- t(otu)
+}
+
+# Get taxonomy table
+tax <- as.data.frame(tax_table(ps2))
+
+# Add genus names (replace NA with "Unknown")
+tax$Genus[is.na(tax$Genus)] <- "Unknown"
+
+# Collapse ASVs to genus
+otu_genus <- rowsum(otu, group = tax$Genus)
+
+meta <- data.frame(sample_data(ps2))
+region <- meta$Region
+names(region) <- rownames(meta)
+
+rownames(annotation_col) <- rownames(meta)
+
+# Match sample order
+annotation_col <- annotation_col[colnames(otu_genus), , drop = FALSE]
+
+# Select top 15 genera
+top_taxa <- names(sort(rowSums(otu_genus), decreasing = TRUE))[1:15]
+otu_top <- otu_genus[top_taxa, ]
+
+# Convert to relative abundance
+otu_rel <- sweep(otu_top, 2, colSums(otu_top), "/")
+
+# Log transform
+otu_log <- log10(otu_rel + 1e-6)
+
+# Average by region
+otu_region <- aggregate(t(otu_rel), by = list(meta$Region), FUN = mean)
+rownames(otu_region) <- otu_region$Group.1
+otu_region <- t(otu_region[, -1])
+
+
+# Plot heatmap
+Heatmap(
+  otu_log,
+  name = "log10 abundance",
+  top_annotation = ha,
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  row_names_gp = grid::gpar(fontsize = 8),
+  column_split = region[colnames(otu_top)]
+)
+```
+
+phyloseq import again. did a ton of maniputaion and want to start fresh to be sure
+```{r}
+#---------------------------
+# Import data
+#---------------------------
+physeq <- qza_to_phyloseq(
+  features  = "data/microbiome/rarefied-table.qza",
+  tree      = "data/microbiome/rooted-tree.qza",
+  taxonomy  = "data/microbiome/taxonomy.qza",
+  metadata  = "MicrobiotaProcess_sample_data.tsv"
+)
+
+#---------------------------
+# Sample filtering
+#---------------------------
+ps <- physeq %>%
+  ps_filter(scientificName == "Peromyscus maniculatus") %>%
+  ps_filter(stateProvince != "Arizona")
+
+sample_names(ps) <- sample_data(ps)$labtracking
+
+ps_otu <- otu_table(ps)
+sort(rowSums(t(ps_otu)))
+
+ps_bc_dist   <- vegdist(t(ps_otu), method = "bray") 
+ps_sor_dist  <- vegdist(t(ps_otu), method = "bray", binary = TRUE)
+
+meta <- data.frame(sample_data(ps))
+meta$decimalLatitude <- as.numeric(meta$decimalLatitude)
+meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
+```
 
 general stats
 ```{r}
@@ -838,17 +1006,17 @@ ggplot(melted_diffs, aes(x = geo_Distance, y = BC_Similarity)) +
 #across-region slope = 0 → distance irrelevant once region differs
 
 
-model <- brm(sor_Similarity ~ dist_z + same_region + dist_z:same_region + (1 | mm(Sample1, Sample2)),
-             data = melted_diffs, 
+#model <- brm(sor_Similarity ~ dist_z + same_region + dist_z:same_region + (1 | mm(Sample1, Sample2)),
+#             data = melted_diffs, 
              #prior = c(prior(normal(0, 1), class = "b"), prior(normal(0, 1), class = "sd")),
 
-             warmup = 2000, iter = 6000,
-             chains = 4,
-             cores = 24,
-             threads = threading(6),
-             control = list(adapt_delta = 0.99,max_treedepth = 15))
+#             warmup = 2000, iter = 6000,
+#             chains = 4,
+#             cores = 24,
+#             threads = threading(6),
+#             control = list(adapt_delta = 0.99,max_treedepth = 15))
 
-summary(model)
+#summary(model)
 ```
 
 
