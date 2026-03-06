@@ -290,7 +290,7 @@ TAXtab$name <- paste(name_tmp, TAXtab$name, sep = "-")
 taxa_names(ps2) <- TAXtab$name
 
 ps_genus <- tax_glom(ps, taxrank = "Genus")
-ps3 <- filter_taxa(ps_genus, function(x) sum(x > 0) >= 10, TRUE)
+ps3 <- filter_taxa(ps3, function(x) sum(x > 0) >= 10, TRUE)
 #ps4 <- filter_taxa(ps3, function(x) sum(x) > 500, TRUE)
 
 otu <- as(otu_table(ps3), "matrix")
@@ -307,7 +307,7 @@ for(i in 1:nrow(otu)){
 
   if(sum(counts) == 0) next
 
-  bc <- vegdist(t(otu), method = "bray", binary = TRUE)
+  bc <- vegdist(t(counts), method = "bray")#, binary = TRUE)
 
   bc_df <- melt(as.matrix(bc),
                 varnames = c("Sample1","Sample2"),
@@ -342,7 +342,7 @@ head(genus_results)
 
 top_genera <- genus_results %>%
   arrange(slope) %>%
-  dplyr::slice(1:12)
+  dplyr::slice(1:20)
 
 top_names <- top_genera$genus
 
@@ -350,11 +350,11 @@ plot_df <- data.frame()
 
 for(g in top_names){
 
-  #ps_g <- prune_taxa(taxa_names(ps3) == g, ps3)
+  #ps_g <- prune_taxa(taxa_names(ps_genus) == g, ps_genus)
   ps_g <- subset_taxa(ps3, Genus == g)
   otu_g <- as(otu_table(ps_g), "matrix")
 
-  bc <- vegdist(t(otu_g), method = "bray", binary = TRUE)
+  bc <- vegdist(t(otu_g), method = "bray")#, binary = TRUE)
 
   melted_BC <- melt(as.matrix(bc),
                     varnames = c("Sample1","Sample2"),
