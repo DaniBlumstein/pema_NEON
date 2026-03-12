@@ -203,6 +203,32 @@ results_ancom_bc$lcf = results_ancom_bc$lcf * -1
 results_ancom_bc$association = ifelse(results_ancom_bc$p_val < 0.05 & results_ancom_bc$lcf > 0, "east", "Not singificant")
 results_ancom_bc$association = ifelse(results_ancom_bc$p_val < 0.05 & results_ancom_bc$lcf < 0, "west",results_ancom_bc$association)
 
+TAXtab =as.data.frame(tax_table(ps2))
+
+name_tmp = sprintf("ASV%s",seq(1:nrow(TAXtab))) 
+#now let's add some information to this. For example, we want to add the genus, and if not available, the last taxonomic information available.
+TAXtab$name =  TAXtab$Species
+TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Genus, TAXtab$name)
+TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Family, TAXtab$name)
+TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Order, TAXtab$name)
+TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Class, TAXtab$name)
+TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Phylum, TAXtab$name)
+unique(is.na(TAXtab$name)) # Ok, we have all names
+
+TAXtab$ASVname = paste(name_tmp, TAXtab$name, sep = "-")
+TAXtab$name[1:10] # ok it looks good.
+
+results_ancom_bc$ASVname = TAXtab$ASVname[match(results_ancom_bc$ASV ,rownames(TAXtab))]
+
+results_sig = results_ancom_bc[results_ancom_bc$p_val < 0.05,]
+table(results_sig$association)
+
+Sum_abundance= colSums(decostand(t(ps_otu), method = "total"))
+results_sig$sum_abundance = Sum_abundance[match(results_sig$ASV, names(Sum_abundance))]
+results_sig = results_sig[order(results_sig$sum_abundance, decreasing = TRUE),]
+results_sig = results_sig[1:14,]
+results_sig$ASVname = factor(results_sig$ASVname, levels = rev(results_sig$ASVname))
+
 library(ggplot2)
 library(ggrepel)
 
@@ -215,7 +241,7 @@ ggplot(results_ancom_bc,
   
   geom_text_repel(
     data = subset(results_ancom_bc, p_val < 0.05),
-    aes(label = name),
+    aes(label = ASVname),
     size = 4,
     max.overlaps = 20
   ) +
@@ -247,68 +273,137 @@ ggplot(results_ancom_bc,
   
   theme(
     plot.title = element_text(size = 22, face = "bold", hjust = 0.5),
-    axis.title = element_text(size = 20, face = "bold"),
+    axis.title = element_text(size = 16),
     axis.text = element_text(size = 16),
     legend.title = element_text(size = 16, face = "bold"),
     legend.text = element_text(size = 14),
     panel.grid = element_blank()
   )
 
-
-TAXtab =as.data.frame(tax_table(ps2))
-
-name_tmp = sprintf("ASV%s",seq(1:nrow(TAXtab))) 
-#now let's add some information to this. For example, we want to add the genus, and if not available, the last taxonomic information available.
-TAXtab$name =  TAXtab$Species
-TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Genus, TAXtab$name)
-TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Family, TAXtab$name)
-TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Order, TAXtab$name)
-TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Class, TAXtab$name)
-TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Phylum, TAXtab$name)
-unique(is.na(TAXtab$name)) # Ok, we have all names
-
-TAXtab$name = paste(name_tmp, TAXtab$name, sep = "-")
-TAXtab$name[1:10] # ok it looks good.
-
-results_ancom_bc$name = TAXtab$name[match(results_ancom_bc$ASV ,rownames(TAXtab))]
-
-results_sig = results_ancom_bc[results_ancom_bc$p_val < 0.05,]
-table(results_sig$association)
-
-Sum_abundance= colSums(decostand(t(ps_otu), method = "total"))
-results_sig$sum_abundance = Sum_abundance[match(results_sig$ASV, names(Sum_abundance))]
-results_sig = results_sig[order(results_sig$sum_abundance, decreasing = TRUE),]
-results_sig = results_sig[1:14,]
-results_sig$name = factor(results_sig$name, levels = rev(results_sig$name))
-
-a = ggplot(results_sig, aes(lcf, name, color = association ))+
-  geom_point() +theme_bw() +
-  geom_segment( aes(x=0, xend=lcf, y=name, yend=name, color = association)) +
-  geom_vline(xintercept = 0, size=0.3) +xlab("log2FoldChange") +ylab(NULL) +
-  theme_bw() +
-  scale_color_manual(values = c("east" = "#5ab4ac","west" = "#d8b365"))
-  
-a
-
 ASVtab_rel = decostand(t(ps_otu), method = "total")
 AASVtab_sig = data.frame(ASVtab_rel[,as.numeric(rownames(results_sig))])
-colnames(AASVtab_sig) = results_sig$name
+colnames(AASVtab_sig) = results_sig$ASVname
 AASVtab_sig$Region = meta$Region
 melted = reshape2::melt(AASVtab_sig, values = "Region")
-melted$variable = factor(melted$variable, levels = rev(results_sig$name))
-
-b = ggplot(melted, aes(value, variable, fill = Region)) +
-  geom_boxplot(outlier.size = 0.5) + theme_bw() + xlab("Relative abundance") +
-    theme( axis.text.y=element_blank()) + ylab(NULL)
-
-b 
+melted$variable = factor(melted$variable, levels = rev(results_sig$ASVname))
 ```
 
 
 ```{r}
-taxa_names(ps2) <- TAXtab$name
-ps_genus <- tax_glom(ps2, taxrank = "Genus")
+# Assign taxa names
+taxa_names(ps2) <- TAXtab$ASVname
 
+# Remove taxa with NA genus
+ps_clean <- subset_taxa(ps2, !is.na(Genus))
+
+# Select genus of interest
+g <- "Bacteroides"
+
+# Subset phyloseq object for that genus
+ps_g <- subset_taxa(ps_clean, Genus == g)
+
+# Create tree plot
+tree_plot <- ggtree(phy_tree(ps_g))
+
+# Extract OTU and Region information
+tree_df <- psmelt(ps_g) %>%
+  select(OTU, Region) %>%
+  filter(!is.na(Region)) %>%
+  distinct()
+
+# Add taxonomy name
+tree_df$name <- TAXtab[match(tree_df$OTU, TAXtab$ASVname), "name"]
+
+# Keep one label per unique name
+tree_df$label_name <- ifelse(!duplicated(tree_df$name), tree_df$name, NA)
+
+# Keep only tips with names
+tip_positions <- tree_plot$data %>%
+  filter(isTip) %>%
+  filter(!is.na(label))
+
+# Compute clade center for labeling (optional)
+clade_labels <- tip_positions %>%
+  group_by(label) %>%
+  summarise(
+    x = mean(x),
+    y = mean(y),
+    .groups = "drop"
+  )
+
+# Plot tree with tip points and labels
+p <- tree_plot %<+% tree_df +
+  geom_tippoint(aes(color = Region), size = 2.5, alpha = 0.5, position = position_nudge(x = 0.003)) +
+  geom_tiplab(
+    aes(label = label_name),
+    size = 5,
+    angle = 90,
+    hjust = 0,
+    offset = 0.005,
+    na.rm = TRUE
+  ) +
+  scale_color_manual(values = east_west_colors) +
+  ggtitle(g) +
+  theme_tree2() +
+  theme(
+    plot.title = element_blank(),
+    legend.position = "right",
+    legend.title = element_text(size = 11),
+    legend.text = element_text(size = 10)
+  ) +
+  coord_flip(clip = "off") +
+  expand_limits(x = max(tree_plot$data$x) + 0.05)
+
+# Display plot
+p
+
+# Assign taxa names
+taxa_names(ps2) <- TAXtab$ASVname
+
+# Remove taxa with NA genus
+ps_clean <- subset_taxa(ps2, !is.na(Genus))
+
+# Select genus of interest
+g <- "Lactobacillus"
+
+# Subset phyloseq object for that genus
+ps_g <- subset_taxa(ps_clean, Genus == g)
+
+# Create tree plot
+tree_plot <- ggtree(phy_tree(ps_g))
+
+# Extract OTU and Region information
+tree_df <- psmelt(ps_g) %>%
+  select(OTU, Region) %>%
+  filter(!is.na(Region)) %>%
+  distinct()
+
+# Add taxonomy name (all labels)
+tree_df$label_name <- TAXtab[match(tree_df$OTU, TAXtab$ASVname), "name"]
+
+# Plot tree with tip points and labels
+p <- tree_plot %<+% tree_df +
+  geom_tippoint(aes(color = Region), size = 2.5, alpha = 0.5, position = position_nudge(x = 0.003)) +
+  geom_tiplab(
+    aes(label = label_name),
+    size = 2,
+    angle = 90,
+    hjust = 0,
+    offset = 0.005,
+    na.rm = TRUE
+  ) +
+  scale_color_manual(values = east_west_colors) +
+  ggtitle(g) +
+  theme_tree2() +
+  theme(
+    plot.title = element_blank(),
+    legend.position = "right",
+    legend.title = element_text(size = 11),
+    legend.text = element_text(size = 10)
+  ) +
+  coord_flip(clip = "off") 
+
+p
 ```
 
 dist decay by gen, SOR
@@ -707,7 +802,7 @@ total_asvs <- ntaxa(ps)
 cat("Total number of ASVs:", total_asvs, "\n\n")
 
 # Agglomerate at Phylum level
-ps_phylum <- tax_glom(ps, taxrank = "Phylum")
+ps_phylum <- tax_glom(ps, taxrank = "Species")
 
 # Transform to relative abundance
 ps_phylum_rel <- transform_sample_counts(ps_phylum, 
@@ -718,7 +813,7 @@ phylum_df <- psmelt(ps_phylum_rel)
 
 # Calculate mean % abundance per region per phylum
 phylum_summary <- phylum_df %>%
-  group_by(Phylum) %>%
+  group_by(Species) %>%
   summarise(mean_percent = mean(Abundance), .groups = "drop")
 
 print(phylum_summary)
@@ -962,7 +1057,7 @@ Bayesian Generalized (Non-)Linear Multivariate Multilevel Models
 #ps_bc_dist
 #ps_sor_dist
 
-melted_BC <- reshape2::melt(as.matrix(ps_sor_dist), varnames = c("Sample1", "Sample2"), value.name = "BC_Dissimilarity")
+melted_BC <- reshape2::melt(as.matrix(ps_bc_dist), varnames = c("Sample1", "Sample2"), value.name = "BC_Dissimilarity")
 
 melted_geo <- reshape2::melt(as.matrix(geo_dist), varnames = c("Sample1", "Sample2"), value.name = "geo_Distance")
 
@@ -1043,7 +1138,7 @@ ggplot(melted_diffs, aes(x = geo_Distance, y = BC_Similarity)) +
   theme_bw() +
     labs(
     x = "Distance (km)",
-    y = "Sorensen Similarity",
+    y = "Bray Curtis Similarity",
     color = "Same Regions"
   ) +
 
