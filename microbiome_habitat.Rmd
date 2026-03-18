@@ -150,6 +150,26 @@ meta$decimalLatitude <- as.numeric(meta$decimalLatitude)
 meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
 ```
 
+top 20 
+```{r}
+colnames(tax_table(ps))
+ps_genus <- tax_glom(ps, taxrank = "Genus")
+
+# Remove uncultured / unclassified / unidentified taxa
+ps_genus <- subset_taxa(
+  ps_genus,
+  !grepl(
+    "uncultured|unclassified|unidentified|unknown",
+    Genus,
+    ignore.case = TRUE
+  )
+)
+
+ps_genus_rel <- transform_sample_counts(ps_genus, function(x) x / sum(x))
+top20 <- names(sort(taxa_sums(ps_genus_rel), decreasing = TRUE))[1:30]
+ps_top20 <- prune_taxa(top20, ps_genus_rel)
+```
+
 geographic distance
 ```{r}
 # -----------------------------
@@ -288,7 +308,6 @@ melted = reshape2::melt(AASVtab_sig, values = "Region")
 melted$variable = factor(melted$variable, levels = rev(results_sig$ASVname))
 ```
 
-
 ```{r}
 # Assign taxa names
 taxa_names(ps2) <- TAXtab$ASVname
@@ -297,7 +316,7 @@ taxa_names(ps2) <- TAXtab$ASVname
 ps_clean <- subset_taxa(ps2, !is.na(Genus))
 
 # Select genus of interest
-g <- "Bacteroides"
+g <- "Lactobacillus "
 
 # Subset phyloseq object for that genus
 ps_g <- subset_taxa(ps_clean, Genus == g)
@@ -362,9 +381,6 @@ taxa_names(ps2) <- TAXtab$ASVname
 
 # Remove taxa with NA genus
 ps_clean <- subset_taxa(ps2, !is.na(Genus))
-
-# Select genus of interest
-g <- "Lactobacillus"
 
 # Subset phyloseq object for that genus
 ps_g <- subset_taxa(ps_clean, Genus == g)
@@ -1378,7 +1394,7 @@ below this is whole microbiome community
 ___________________________________________________________________________
 physical distance matrix using GPS
 ```{r}
-gps <- as.data.frame(mpse_samples_filtered@colData)[, c("labtracking","stateProvince","land_use","decimalLatitude","decimalLongitude","rain","temp","Region")]
+gps <- as.data.frame(mpse_samples_filtered@colData)[, c("labtracking","stateProvince","decimalLatitude","decimalLongitude","Region")]
 
 locations <- unique(gps$stateProvince)
 
@@ -1890,26 +1906,6 @@ ggplot() +
 
 ```
 
-top 20 
-```{r}
-colnames(tax_table(ps))
-ps_genus <- tax_glom(ps, taxrank = "Genus")
-
-# Remove uncultured / unclassified / unidentified taxa
-ps_genus <- subset_taxa(
-  ps_genus,
-  !grepl(
-    "uncultured|unclassified|unidentified|unknown",
-    Genus,
-    ignore.case = TRUE
-  )
-)
-
-ps_genus_rel <- transform_sample_counts(ps_genus, function(x) x / sum(x))
-top20 <- names(sort(taxa_sums(ps_genus_rel), decreasing = TRUE))[1:30]
-ps_top20 <- prune_taxa(top20, ps_genus_rel)
-```
-
 top 20 PCoA with individuals as points
 ```{r}
 # Step 1: Get all Families 
@@ -2124,7 +2120,6 @@ ggplot(
 
 ```
 
-
 top 20 families distance decay plots
 ```{r}
 # -----------------------------
@@ -2208,47 +2203,4 @@ ggplot(df, aes(x = geo_km, y = percent_shared,
     title = "Distance–decay of ASV similarity by Species"
   ) +
   theme_bw()
-```
-
-
-MaAsLin (Microbiome Multivariable Associations with Linear Models)
-https://github.com/biobakery/biobakery/wiki/maaslin3
-
-do this at the family and or spices level
-```{r}
-install_github("biobakery/Maaslin2")
-library(Maaslin2)
-
-ps_genus <- tax_glom(ps, taxrank = "Genus")
-otu <-as(otu_table(ps_genus), "matrix")
-
-
-# Factor the categorical variables to test
-meta$Region <- factor(meta$Region, levels = c('west', 'east'))
-meta$sex <- factor(meta$sex, levels = c('M', 'F'))
-meta$land_use <- factor(meta$land_use, levels = c('Grassland/Herbaceous',
-                                                  'Evergreen Forest',
-                                                  "Shrub/Scrub",
-                                                  "Cultivated Crops",
-                                                  "Deciduous Forest",
-                                                  "Mixed Forest"))
-
-set.seed(1)
-fit_out <- maaslin3(input_data = t(otu),
-                    input_metadata = meta,
-                    output = 'm2_output',
-                    formula = '~ Region',
-                    normalization = 'TSS',
-                    transform = 'LOG',
-                    augment = TRUE,
-                    standardize = TRUE,
-                    plot_summary_plot = TRUE,
-                    plot_associations = TRUE,
-                    max_significance = 0.1,
-                    median_comparison_abundance = TRUE,
-                    median_comparison_prevalence = F,
-                    max_pngs = 250,
-                    cores = 1)
-
-
 ```
