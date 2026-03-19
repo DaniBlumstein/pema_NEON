@@ -18,7 +18,7 @@ mostly packages
 #install.packages("remotes")
 #remotes::install_github("YuLab-SMU/ggtree")
 #remotes::install_github("YuLab-SMU/MicrobiotaProcess")
-
+#devtools::install_github("FrederickHuangLin/ANCOMBC")
 
 
 #install.packages(
@@ -29,6 +29,12 @@ mostly packages
 #if (!requireNamespace("devtools", quietly = TRUE)){install.packages("devtools")}
 #devtools::install_github("jbisanz/qiime2R")
 #devtools::install_github("zpneal/backbone", ref = "devel", build_vignettes = TRUE)
+
+#if (!require("ANCOMBC", quietly = TRUE)){
+       #BiocManager::install("ANCOMBC")}
+
+#if (!require("microbiome", quietly = TRUE)){
+       #BiocManager::install("microbiome")}
 
 setwd("~/Library/CloudStorage/OneDrive-ArizonaStateUniversity/pdoc_ASU/projects/NEON/Neon_Rproject")
 
@@ -64,6 +70,10 @@ suppressPackageStartupMessages({
     library(geosphere)
     library(ape)
     library(phangorn)
+    library(ggrepel)
+    library(ANCOMBC)
+    library(microbiome)
+    library(jsonlite)
 })
 ```
 
@@ -191,15 +201,6 @@ colnames(geo_dist) <- rownames(meta)
 
 ANCOMBC
 ```{r}
-if (!require("ANCOMBC", quietly = TRUE)){
-       BiocManager::install("ANCOMBC")}
-
-if (!require("microbiome", quietly = TRUE)){
-       BiocManager::install("microbiome")}
-
-library(ANCOMBC)
-library(microbiome)
-
 # Remove uncultured / unclassified / unidentified taxa
 ps2 <- subset_taxa(
   ps,
@@ -248,9 +249,6 @@ results_sig$sum_abundance = Sum_abundance[match(results_sig$ASV, names(Sum_abund
 results_sig = results_sig[order(results_sig$sum_abundance, decreasing = TRUE),]
 results_sig = results_sig[1:14,]
 results_sig$ASVname = factor(results_sig$ASVname, levels = rev(results_sig$ASVname))
-
-library(ggplot2)
-library(ggrepel)
 
 ggplot(results_ancom_bc,
        aes(x = as.numeric(lcf),
@@ -308,15 +306,18 @@ melted = reshape2::melt(AASVtab_sig, values = "Region")
 melted$variable = factor(melted$variable, levels = rev(results_sig$ASVname))
 ```
 
+ASV by genus trees
 ```{r}
 # Assign taxa names
 taxa_names(ps2) <- TAXtab$ASVname
+
+unique(TAXtab$Genus)
 
 # Remove taxa with NA genus
 ps_clean <- subset_taxa(ps2, !is.na(Genus))
 
 # Select genus of interest
-g <- "Lactobacillus "
+g <- "Lactobacillus"
 
 # Subset phyloseq object for that genus
 ps_g <- subset_taxa(ps_clean, Genus == g)
@@ -424,7 +425,6 @@ p
 
 dist decay by gen, SOR
 ```{r}
-
 ps3 <- filter_taxa(ps_genus, function(x) sum(x > 0) >= 10, TRUE)
 #ps4 <- filter_taxa(ps3, function(x) sum(x) > 500, TRUE)
 
@@ -481,7 +481,7 @@ head(genus_results)
 
 top_genera <- genus_results %>%
   arrange(slope) %>%
-  dplyr::slice(1:20)
+  dplyr::slice(1:100)
 
 top_names <- top_genera$genus
 
@@ -780,7 +780,62 @@ ggplot(plot_df,
   )
 ```
 
-phyloseq import again. did a ton of maniputaion and want to start fresh to be sure
+```{r}
+con <- file('gtdb_genus_summary.jsonl.gz', open = 'r')
+top20 = top_genera
+top20_1 = top20
+
+data <- stream_in(con)
+close(con)
+head(data)
+str(data$summaries[[1]])
+
+df <- lapply(seq_len(nrow(data)), function(i) {
+  fam <- data$tax_name[i]
+  s <- data$summaries[[i]]
+
+# flatten the nested percentages dataframe
+s$pct_true <- s$percentages$true
+s$pct_false <- s$percentages$false
+s$percentages <- NULL
+
+s$family <- fam
+s
+}) |> dplyr::bind_rows()
+
+# move family to front
+df <- df |> dplyr::select(family, everything())
+df_ob_aer = df[df$name == 'obligate anaerobic',]
+df_ob_aer = df_ob_aer[df_ob_aer$family %in% top20$genus, ]
+df_ob_aer <- df_ob_aer |>
+  dplyr::mutate(verdict = dplyr::case_when(
+    grepl("^true",majority_label, ignore.case = TRUE) ~ "true",
+    grepl("^false",majority_label, ignore.case = TRUE) ~ "false",
+    grepl("No robust majority", majority_label, ignore.case = TRUE) ~ "no_robust_majority"
+))
+head(top20)
+
+top20_1 <- top20 |>
+  dplyr::left_join(
+    df_ob_aer |> dplyr::select(family, majority_label, verdict, pct_true),
+    by = c('genus' = 'family')
+  )
+#distance decay slope cuz why not
+cor.test(top20_1$pct_true, top20_1$slope, method = 'spearman')
+
+a = ggplot(top20_1, aes(x = pct_true, y = slope, color = genus)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_text_repel(aes(label = genus), size = 3, max.overlaps = 20) +
+  #scale_x_continuous(limits = c(0, 100), breaks = seq(0, 100, 20)) +
+  labs(
+    x = '% strains obligate anaerobic',
+    y = 'distance decay slope'
+  ) +
+  theme_bw() #+ scale_color_manual(values = phylum_colors)# <-- same
+a
+```
+
+phyloseq import again. did a ton of manipulation and want to start fresh to be sure
 ```{r}
 #---------------------------
 # Import data
