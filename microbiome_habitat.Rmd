@@ -152,6 +152,15 @@ sample_names(ps) <- sample_data(ps)$labtracking
 ps_otu <- otu_table(ps)
 sort(rowSums(t(ps_otu)))
 
+write.table(
+  as.data.frame(ps_otu),
+  file = "ps_otu.tsv",
+  sep = "\t",
+  row.names = TRUE,  # This will include row names in the first column
+  col.names = NA,    # This adds a blank header for the row names column
+  quote = FALSE      # Recommended to avoid issues with quotes in your data
+)
+
 ps_bc_dist   <- vegdist(t(ps_otu), method = "bray") 
 ps_sor_dist  <- vegdist(t(ps_otu), method = "bray", binary = TRUE)
 
@@ -675,7 +684,7 @@ head(genus_results)
 
 top_genera <- genus_results %>%
   arrange(slope) %>%
-  dplyr::slice(1:20)
+  dplyr::slice(1:50)
 
 top_names <- top_genera$genus
 
@@ -805,7 +814,10 @@ s
 
 # move family to front
 df <- df |> dplyr::select(family, everything())
-df_ob_aer = df[df$name == 'obligate anaerobic',]
+
+names <- unique(df$name)
+
+df_ob_aer = df[df$name == 'gene count',]
 df_ob_aer = df_ob_aer[df_ob_aer$family %in% top20$genus, ]
 df_ob_aer <- df_ob_aer |>
   dplyr::mutate(verdict = dplyr::case_when(
@@ -820,20 +832,22 @@ top20_1 <- top20 |>
     df_ob_aer |> dplyr::select(family, majority_label, verdict, pct_true),
     by = c('genus' = 'family')
   )
+top20_1$majority_number <- as.numeric(gsub("[^0-9.]", "", top20_1$majority_label))
 #distance decay slope cuz why not
-cor.test(top20_1$pct_true, top20_1$slope, method = 'spearman')
+#cor.test(top20_1$pct_true, top20_1$slope, method = 'spearman')
 
-a = ggplot(top20_1, aes(x = pct_true, y = slope, color = genus)) +
+ggplot(top20_1, aes(x = majority_number, y = slope, color = r2)) +
   geom_point(size = 3, alpha = 0.8) +
   geom_text_repel(aes(label = genus), size = 3, max.overlaps = 20) +
   #scale_x_continuous(limits = c(0, 100), breaks = seq(0, 100, 20)) +
   labs(
-    x = '% strains obligate anaerobic',
+    x = 'gene count',
     y = 'distance decay slope'
   ) +
+  #guides(color = "none")+
   theme_bw() #+ scale_color_manual(values = phylum_colors)# <-- same
-a
 ```
+
 
 phyloseq import again. did a ton of manipulation and want to start fresh to be sure
 ```{r}
@@ -865,6 +879,35 @@ ps_sor_dist  <- vegdist(t(ps_otu), method = "bray", binary = TRUE)
 meta <- data.frame(sample_data(ps))
 meta$decimalLatitude <- as.numeric(meta$decimalLatitude)
 meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
+```
+
+piecrust
+```{r}
+devtools::install_github("cafferychen777/ggpicrust2")
+library(ggpicrust2)
+library(readr)
+library(ggpicrust2)
+library(tibble)
+library(tidyverse)
+library(ggprism)
+library(patchwork)
+
+daa_results_df <- pathway_daa(abundance = ps_otu, metadata = meta, group = "Region", daa_method = "ALDEx2", select = NULL, reference = NULL)
+
+# Filter results for ALDEx2_Kruskal-Wallace test method
+daa_sub_method_results_df <- daa_results_df[daa_results_df$method == "ALDEx2_Wilcoxon rank test", ]
+
+# Annotate pathway results without KO to KEGG conversion
+daa_annotated_sub_method_results_df <- pathway_annotation(pathway = "KO", daa_results_df = daa_sub_method_results_df, ko_to_kegg = FALSE)
+
+p <- pathway_errorbar(abundance = ps_otu, daa_results_df = daa_annotated_sub_method_results_df, Group = meta$Region, p_values_threshold = 0.05, order = "group",
+select = daa_annotated_sub_method_results_df %>% arrange(p_adjust) %>% slice(1:20) %>% dplyr::select(feature) %>% pull(),
+ko_to_kegg = FALSE,
+p_value_bar = TRUE,
+colors = NULL,
+x_lab = "description")
+
+p
 ```
 
 general stats
