@@ -605,11 +605,10 @@ plot_df %>%
     "Not shared" = 21
   )) +
   
-  scale_color_manual(values = c(
-    "Within state" = "#bababa",
-    "Between states (same region)" = "#9C68AE",
-    "Between regions (East vs West)" = "#D85F64"
-  )) +
+  scale_color_manual(values =
+  c('between regions (east vs west)' ="#D85F64",
+                 'within east'="#5ab4ac",
+                 'within west'="#d8b365")) +
   
   theme_bw() +
   labs(x = NULL, y = "Geographic distance")
@@ -848,7 +847,6 @@ ggplot(top20_1, aes(x = majority_number, y = slope, color = r2)) +
   theme_bw() #+ scale_color_manual(values = phylum_colors)# <-- same
 ```
 
-
 phyloseq import again. did a ton of manipulation and want to start fresh to be sure
 ```{r}
 #---------------------------
@@ -879,35 +877,6 @@ ps_sor_dist  <- vegdist(t(ps_otu), method = "bray", binary = TRUE)
 meta <- data.frame(sample_data(ps))
 meta$decimalLatitude <- as.numeric(meta$decimalLatitude)
 meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
-```
-
-piecrust
-```{r}
-devtools::install_github("cafferychen777/ggpicrust2")
-library(ggpicrust2)
-library(readr)
-library(ggpicrust2)
-library(tibble)
-library(tidyverse)
-library(ggprism)
-library(patchwork)
-
-daa_results_df <- pathway_daa(abundance = ps_otu, metadata = meta, group = "Region", daa_method = "ALDEx2", select = NULL, reference = NULL)
-
-# Filter results for ALDEx2_Kruskal-Wallace test method
-daa_sub_method_results_df <- daa_results_df[daa_results_df$method == "ALDEx2_Wilcoxon rank test", ]
-
-# Annotate pathway results without KO to KEGG conversion
-daa_annotated_sub_method_results_df <- pathway_annotation(pathway = "KO", daa_results_df = daa_sub_method_results_df, ko_to_kegg = FALSE)
-
-p <- pathway_errorbar(abundance = ps_otu, daa_results_df = daa_annotated_sub_method_results_df, Group = meta$Region, p_values_threshold = 0.05, order = "group",
-select = daa_annotated_sub_method_results_df %>% arrange(p_adjust) %>% slice(1:20) %>% dplyr::select(feature) %>% pull(),
-ko_to_kegg = FALSE,
-p_value_bar = TRUE,
-colors = NULL,
-x_lab = "description")
-
-p
 ```
 
 general stats
@@ -968,20 +937,12 @@ shared_df <- shared_df %>%
 shared_df <- shared_df %>%
   dplyr::mutate(
     Comparison = dplyr::case_when(
-      State1 == State2 ~ "Within state",
-      State1 != State2 & Region1 == Region2 ~ "Between states (same region)",
-      Region1 != Region2 ~ "Between regions (East vs West)"
+      Region1 == "east" & Region2 == "east" ~ "within east",
+      Region1 == "west" & Region2 == "west" ~ "within west",
+      Region1 != Region2 ~ "between regions (east vs west)",
+      TRUE ~ NA_character_
     )
   )
-
-shared_df$Comparison <- factor(
-  shared_df$Comparison,
-  levels = c(
-    "Within state",
-    "Between states (same region)",
-    "Between regions (East vs West)"
-  )
-)
 
 summary <- shared_df %>%
   group_by(Comparison) %>%
@@ -993,18 +954,23 @@ print(summary)
 # 6. Plot
 ggplot(shared_df, aes(x = Comparison, y = PercentShared, fill = Comparison)) +
   geom_violin(trim = FALSE) +
-  geom_jitter(width = 0.15, alpha = 0.3, size = 1) +
+  geom_jitter(aes(color = Comparison),width = 0.15, size = 1,shape = 21,color = "black",  ) +
   theme_bw() +
   labs(
     x = NULL,
     y = "Percent shared ASVs"
   ) +
   scale_fill_manual(values = c(
-    "#bababa",
-    "#9C68AE",
-    "#D85F64"
+    "#D85F64",
+    "#5ab4ac",
+    "#d8b365"
   )) +
-  guides(fill = "none") +
+  scale_color_manual(values = c(
+    "#D85F64",
+    "#5ab4ac",
+    "#d8b365"
+  )) +
+  #guides(fill = "none") +
   theme(
     axis.title.y = element_text(size = 16),
     axis.text.x  = element_blank(),
@@ -1171,7 +1137,7 @@ Bayesian Generalized (Non-)Linear Multivariate Multilevel Models
 #ps_bc_dist
 #ps_sor_dist
 
-melted_BC <- reshape2::melt(as.matrix(ps_bc_dist), varnames = c("Sample1", "Sample2"), value.name = "BC_Dissimilarity")
+melted_BC <- reshape2::melt(as.matrix(ps_sor_dist), varnames = c("Sample1", "Sample2"), value.name = "BC_Dissimilarity")
 
 melted_geo <- reshape2::melt(as.matrix(geo_dist), varnames = c("Sample1", "Sample2"), value.name = "geo_Distance")
 
@@ -1202,13 +1168,21 @@ melted_diffs$region1 <- region_map[melted_diffs$Sample1]
 melted_diffs$region2 <- region_map[melted_diffs$Sample2]
 
 # Check if they are in the same region
+melted_diffs$compairson <- ifelse(
+  melted_diffs$region1 == "east" & melted_diffs$region2 == "east", "within east",
+  ifelse(
+    melted_diffs$region1 == "west" & melted_diffs$region2 == "west", "within west",
+    "between regions (east vs west)"
+  )
+)
+
 melted_diffs$same_region <- melted_diffs$region1 == melted_diffs$region2
 
 range.use <- function(x,min.use,max.use){ (x - min(x,na.rm=T))/(max(x,na.rm=T)-min(x,na.rm=T)) * (max.use - min.use) + min.use }
 
 melted_diffs$dist_scaled <- range.use(melted_diffs$geo_Distance, 0, 1)
 
-summary(melted_diffs$geo_Distance, by = same_region)
+summary(melted_diffs$geo_Distance, by = compairson)
 
 #slope = change in similarity per 1 SD of 100 km distances
 
@@ -1229,21 +1203,22 @@ library(ggnewscale)
 
 #install.packages("colorspace")  # once
 library(colorspace)
-line_colors <- c("TRUE" = "#762a83",
-                 "FALSE"  = "#b2182b")
+line_colors <- c('between regions (east vs west)' ="#D85F64",
+                 'within east'="#5ab4ac",
+                 'within west'="#d8b365") 
 
 #line_colors <- darken(base_colors, 0.3)
 base_colors <- lighten(line_colors, 0.3 )
 ggplot(melted_diffs, aes(x = geo_Distance, y = BC_Similarity)) +
 
   # Points (light colors)
-  geom_point(aes(color = same_region), size = 2) +
+  geom_point(aes(color = compairson), size = 2, alpha = 0.5) +
   scale_color_manual(values = base_colors, guide = "none") +
 
   ggnewscale::new_scale_color() +
 
   # Lines (darker colors)
-  geom_smooth(aes(color = same_region),
+  geom_smooth(aes(color = compairson),
               method = "lm",
               se = FALSE,
               linewidth = 1.2) +
@@ -1252,7 +1227,8 @@ ggplot(melted_diffs, aes(x = geo_Distance, y = BC_Similarity)) +
   theme_bw() +
     labs(
     x = "Distance (km)",
-    y = "Bray Curtis Similarity",
+    #y = "Bray Curtis Similarity",
+    y = "Sorensen Similarity ",
     color = "Same Regions"
   ) +
 
@@ -2216,89 +2192,4 @@ ggplot(
     strip.text = element_text(face = "bold")
   )
 
-```
-
-top 20 families distance decay plots
-```{r}
-# -----------------------------
-# Extract OTU table
-# -----------------------------
-otu_mat <- as(otu_table(ps_top20), "matrix")
-if (taxa_are_rows(ps_top20)) {
-  otu_mat <- t(otu_mat)
-}
-
-# -----------------------------
-# Bray–Curtis similarity (%)
-# -----------------------------
-bc_dist <- vegdist(otu_mat, method = "bray",binary = T)
-bc_sim  <- (1 - as.matrix(bc_dist)) * 100
-
-# -----------------------------
-# Convert distances to long format
-# -----------------------------
-bc_long <- as.data.frame(as.table(bc_sim))
-colnames(bc_long) <- c("sample1", "sample2", "percent_shared")
-
-geo_long <- as.data.frame(as.table(geo_dist))
-colnames(geo_long) <- c("sample1", "sample2", "geo_km")
-
-df <- bc_long %>%
-  left_join(geo_long, by = c("sample1", "sample2")) %>%
-  filter(sample1 != sample2)
-
-# -----------------------------
-# Add sample metadata
-# -----------------------------
-#meta_lookup <- meta %>%
-#  rownames_to_column("sample1") %>%
- # select(sample1, Region)
-
-df <- df %>%
-  left_join(meta_lookup, by = "sample1")
-
-# -----------------------------
-# Add phylum info for ALL ASVs
-# -----------------------------
-tax <- as.data.frame(tax_table(ps_top20))
-
-otu_pa <- as.data.frame(otu_mat)
-otu_pa$sample1 <- rownames(otu_pa)
-
-# Expand OTUs to long format
-otu_long <- otu_pa %>%
-  pivot_longer(-sample1, names_to = "ASV", values_to = "present") %>%
-  filter(present == 1) %>%
-  left_join(
-    tax %>% rownames_to_column("ASV") %>% select(ASV, Species),
-    by = "ASV"
-  )
-
-# Join phylum info to df: now each row can repeat for multiple phyla
-df <- df %>%
-  left_join(
-    otu_long %>% select(sample1, Species) %>% distinct(),
-    by = "sample1"
-  )
-
-# -----------------------------
-# Plot distance–decay faceted by phylum
-# -----------------------------
-ggplot(df, aes(x = geo_km, y = percent_shared,
-               color = Region,
-               shape = Region)) +
-  geom_point(alpha = 0.1, size = 2) +
-  scale_color_manual(values = east_west_colors) +
-  geom_smooth(aes(group = Region),
-              method = "loess",
-              se = FALSE) +
-  facet_wrap(~ Species, scales = "free_y") +
-  labs(
-    x = "Geographic distance (km)",
-    y = "Bray–Curtis similarity (%)",
-    color = "Region",
-    shape = "Region",
-    title = "Distance–decay of ASV similarity by Species"
-  ) +
-  theme_bw()
 ```
