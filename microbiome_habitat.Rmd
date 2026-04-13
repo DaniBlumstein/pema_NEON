@@ -670,7 +670,7 @@ df_func <- df_func |> select(family, everything())
 ### ---------------------------
 
 df_gene_count <- df_func %>%
-  filter(name == "estimated gene count") %>%
+  filter(name == "genome size") %>%
   filter(family %in% df$Genus) 
 
 ### ---------------------------
@@ -812,32 +812,32 @@ w <- 0.20
 # =========================
 
 # EAST
-p <- p + new_scale_fill() +
-  geom_fruit(
-    data = ring_df,
-    geom = geom_tile,
-    aes(y = ASV, x = ring_positions["east"] * w + 1, fill = east),
-    width = w,offset = 0  
-  ) +
-  scale_fill_viridis_c(
-    option = "mako",
-    na.value = "white",
-    name = "East (log)"
-  )
+#p <- p + new_scale_fill() +
+#  geom_fruit(
+#    data = ring_df,
+#    geom = geom_tile,
+#    aes(y = ASV, x = ring_positions["east"] * w + 1, fill = east),
+#    width = w,offset = 0  
+#  ) +
+#  scale_fill_viridis_c(
+#    option = "mako",
+#    na.value = "white",
+#    name = "East (log)"
+#  )
 
 # WEST
-p <- p + new_scale_fill() +
-  geom_fruit(
-    data = ring_df,
-    geom = geom_tile,
-    aes(y = ASV, x = ring_positions["west"] * w + 1, fill = west),
-    width = w,offset = 0  
-  ) +
-  scale_fill_viridis_c(
-    option = "rocket",
-    na.value = "white",
-    name = "West (log)"
-  )
+#p <- p + new_scale_fill() +
+#  geom_fruit(
+#    data = ring_df,
+#    geom = geom_tile,
+#    aes(y = ASV, x = ring_positions["west"] * w + 1, fill = west),
+#    width = w,offset = 0  
+#  ) +
+#  scale_fill_viridis_c(
+#    option = "rocket",
+#    na.value = "white",
+#    name = "West (log)"
+#  )
 
 # REGION
 p <- p + new_scale_fill() +
@@ -866,9 +866,9 @@ p <- p + new_scale_fill() +
     width = w
   ) +
   scale_fill_viridis_c(
-    option = "inferno",
+    option = "mako",
     na.value = "white",
-    name = "Gene count"
+    name = "Genome size"
   )
 
 # ANAEROBIC
@@ -880,7 +880,6 @@ p <- p + new_scale_fill() +
     width = w 
   ) +
   scale_fill_viridis_c(
-    option = "plasma",
     na.value = "white",
     name = "Obligate anaerobic"
   )
@@ -892,11 +891,11 @@ p <- p + new_scale_fill() +
 genus_nodes <- tax_df %>% 
   filter(Genus != "Unknown") %>% 
   group_by(Genus) %>% 
-  filter(n() > 10) %>% 
+  filter(n() > 2) %>% 
   summarise(node = getMRCA(tree, ASV), .groups = "drop") %>%
   filter(!is.na(node)) 
 
-label_offset <- 1 + 5*0.1
+label_offset <- 1 + 5*0.01
 
 for(i in seq_len(nrow(genus_nodes))){
   
@@ -905,14 +904,14 @@ for(i in seq_len(nrow(genus_nodes))){
       node = genus_nodes$node[i],
       label = genus_nodes$Genus[i],
       
-      offset = label_offset,     # 🔥 push OUTSIDE rings
+      offset = label_offset,     #  push OUTSIDE rings
       offset.text = 0.01,
       
-      align = TRUE,              # 🔥 key for readability
+      align = TRUE,              #  key for readability
       linetype = 1,
       barsize = 0.3,
       
-      fontsize = 2.5,            # slightly larger
+      fontsize = 2,            # slightly larger
       fontface = "italic",
       angle = "auto"
     )
@@ -923,10 +922,11 @@ for(i in seq_len(nrow(genus_nodes))){
 p +
   theme_void() +
   theme(
-    legend.position = "right",
-    legend.title = element_text(size = 11, face = "bold"),
-    legend.text = element_text(size = 9),
-    plot.margin = margin(10, 30, 10, 10)
+    legend.title = element_text(size = 11),
+    legend.text = element_text(size = 8),
+    plot.margin = margin(80, 110, 70, 80),  # top, right, bottom, left,
+  legend.position = c(1.1, 0.5),  # push legend outside
+  legend.justification = c("left", "center")
   )
 ```
 
