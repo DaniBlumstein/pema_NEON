@@ -185,7 +185,7 @@ ps_genus <- subset_taxa(
 )
 
 ps_genus_rel <- transform_sample_counts(ps_genus, function(x) x / sum(x))
-top20 <- names(sort(taxa_sums(ps_genus_rel), decreasing = TRUE))[1:30]
+top20 <- names(sort(taxa_sums(ps_genus_rel), decreasing = TRUE))[1:20]
 ps_top20 <- prune_taxa(top20, ps_genus_rel)
 ```
 
@@ -432,209 +432,74 @@ p <- tree_plot %<+% tree_df +
 p
 ```
 
-dist decay by gen, SOR
+dist decay by gen
 ```{r}
-ps3 <- filter_taxa(ps_genus, function(x) sum(x > 0) >= 10, TRUE)
-#ps4 <- filter_taxa(ps3, function(x) sum(x) > 500, TRUE)
+### -----------------------------
+### 1. Filter genera (from your top 20)
+### -----------------------------
+tax <- as.data.frame(tax_table(ps_top20))
+region_map <- setNames(meta$Region, meta$labtracking)
 
-otu <- as(otu_table(ps3), "matrix")
-tax <- as.data.frame(tax_table(ps3))
+top_genera <- unique(tax$Genus)
 
-if(!taxa_are_rows(ps3)){
-  otu <- t(otu)
-}
+# Get state vector aligned to samples
+state_vec <- meta$stateProvince
+names(state_vec) <- sample_names(ps)
 
-genus_results <- data.frame()
+# Function: number of states a taxon appears in
+taxa_states <- apply(ps_otu, 1, function(x) {
+  present_samples <- names(x)[x > 0]
+  length(unique(state_vec[present_samples]))
+})
 
-for(i in 1:nrow(otu)){
+# Apply BOTH filters:
+# 1. present in >= 5 samples
+# 2. present in >= 2 states
+keep_taxa <- (rowSums(ps_otu > 0) >= 5) & (taxa_states >= 2)
 
-  #g <- rownames(tax)[i]
-  g <- tax$Genus[i]
+# Prune phyloseq object
+ps3 <- prune_taxa(keep_taxa, ps)
 
-  counts <- otu[i, , drop = FALSE]
+### -----------------------------
+### 2. Loop over genera
+### -----------------------------
+plot_list <- list()
+results_list <- list()
 
-  if(sum(counts) == 0) next
+for(g in top_genera){
 
-  bc <- vegdist(t(counts), method = "bray", binary = TRUE)
-
-  bc_df <- melt(as.matrix(bc),
-                varnames = c("Sample1","Sample2"),
-                value.name = "BC_Dissimilarity")
-
-  geo_df <- melt(as.matrix(geo_dist),
-                 varnames = c("Sample1","Sample2"),
-                 value.name = "geo_Distance")
-
-  df <- geo_df
-  df$BC_Similarity <- 1 - bc_df$BC_Dissimilarity
-
-  df <- df %>%
-    filter(Sample1 != Sample2) %>%
-    mutate(pair_min = pmin(as.character(Sample1), as.character(Sample2)),
-           pair_max = pmax(as.character(Sample1), as.character(Sample2))) %>%
-    distinct(pair_min, pair_max, .keep_all = TRUE)
-
-  model <- lm(BC_Similarity ~ geo_Distance, data = df)
-
-  genus_results <- rbind(
-    genus_results,
-    data.frame(
-      genus = g,
-      slope = coef(model)[2],
-      r2 = summary(model)$r.squared
-    )
-  )
-}
-
-head(genus_results)
-
-top_genera <- genus_results %>%
-  arrange(slope) %>%
-  dplyr::slice(1:100)
-
-top_names <- top_genera$genus
-
-plot_df <- data.frame()
-
-for(g in top_names){
-
-  # find ASVs belonging to this genus
-  taxa_g <- taxa_names(ps3)[tax[, "Genus"] == g]
-
+  # Get all ASVs for this genus
+  taxa_g <- taxa_names(ps3)[tax$Genus == g]
   if(length(taxa_g) == 0) next
 
   ps_g <- prune_taxa(taxa_g, ps3)
-  #ps_g <- prune_taxa(taxa_names(ps3) == g, ps3)
+
+  # Skip empty phyloseq objects
+  if(ntaxa(ps_g) == 0 || nsamples(ps_g) == 0) next
+
   otu_g <- as(otu_table(ps_g), "matrix")
 
   if(!taxa_are_rows(ps_g)){
     otu_g <- t(otu_g)
   }
 
-  # Sørensen distance (binary Bray)
-  sor <- vegdist(t(otu_g), method = "bray", binary = TRUE)
+  # Safety checks
+  if(nrow(otu_g) == 0 || ncol(otu_g) == 0) next
+  if(all(is.na(otu_g))) next
+  if(sum(otu_g, na.rm = TRUE) == 0) next
 
-  sor_df <- reshape2::melt(as.matrix(sor),
+  ### -----------------------------
+  ### Bray-Curtis across samples
+  ### -----------------------------
+  bc <- vegdist(t(otu_g), method = "bray")
+  bc_mat <- as.matrix(bc)
+
+  if(all(is.na(bc_mat))) next
+  if(nrow(bc_mat) == 0 || ncol(bc_mat) == 0) next
+
+  bc_df <- melt(bc_mat,
                 varnames = c("Sample1","Sample2"),
-                value.name = "Sor_Dissimilarity")
-
-  geo_df <- reshape2::melt(as.matrix(geo_dist),
-                 varnames = c("Sample1","Sample2"),
-                 value.name = "geo_Distance")
-
-  sor_df$Sor_Similarity <- 1 - sor_df$Sor_Dissimilarity
-
-  melted_diffs <- merge(sor_df, geo_df, by = c("Sample1","Sample2"))
-
-  melted_diffs <- melted_diffs %>%
-  filter(Sample1 != Sample2) %>%
-  mutate(
-    pair_min = pmin(Sample1, Sample2),
-    pair_max = pmax(Sample1, Sample2)
-  ) %>%
-  distinct(pair_min, pair_max, .keep_all = TRUE)
-
-
-
-  region_map <- setNames(meta$Region, meta$labtracking)
-  state_map  <- setNames(meta$stateProvince, meta$labtracking)
-
-  melted_diffs$region1 <- region_map[melted_diffs$Sample1]
-  melted_diffs$region2 <- region_map[melted_diffs$Sample2]
-
-  melted_diffs$state1 <- state_map[melted_diffs$Sample1]
-  melted_diffs$state2 <- state_map[melted_diffs$Sample2]
-
-  melted_diffs <- melted_diffs %>%
-  mutate(
-    Comparison = case_when(
-      state1 == state2 ~ "Within state",
-      state1 != state2 & region1 == region2 ~ "Between states (same region)",
-      region1 != region2 ~ "Between regions (East vs West)"
-    )
-  )
-  
-  melted_diffs$ASV <- g
-  plot_df <- rbind(plot_df, melted_diffs)
-}
-
-summary_df <- plot_df %>%
-  group_by(ASV, Comparison) %>%
-  summarise(
-    mean_sor = mean(Sor_Similarity, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-print(summary)
-
-plot_df$Comparison <- factor(
-  plot_df$Comparison,
-  levels = c(
-    "Within state",
-    "Between states (same region)",
-    "Between regions (East vs West)"
-  )
-)
-
-plot_df$Shared <- ifelse(plot_df$Sor_Similarity > 0, "Shared", "Not shared")
-
-library(ggbeeswarm)
-plot_df %>%
-  filter(!is.na(geo_Distance), !is.na(Sor_Similarity), !is.na(Comparison)) %>%
-  mutate(
-    Comparison = factor(
-      Comparison,
-      levels = c(
-        "Within state",
-        "Between states (same region)",
-        "Between regions (East vs West)"
-      )
-    ),
-    Shared = ifelse(Sor_Similarity > 0, "Shared", "Not shared")
-  ) %>%
-  ggplot(aes(x = Shared, y = geo_Distance,
-             color = Comparison,
-             shape = Shared)) +
-  
-  geom_beeswarm(size = 2,stroke = 1) +
-  
-  facet_wrap(~ASV) +
-  
-  scale_shape_manual(values = c(
-    "Shared" = 16,
-    "Not shared" = 21
-  )) +
-  
-  scale_color_manual(values =
-  c('between regions (east vs west)' ="#D85F64",
-                 'within east'="#5ab4ac",
-                 'within west'="#d8b365")) +
-  
-  theme_bw() +
-  labs(x = NULL, y = "Geographic distance")
-
-
-```
-
-dist decay by gen, BC
-```{r}
-genus_results <- data.frame(stringsAsFactors = FALSE)
-
-for(i in 1:nrow(otu)){
-
-  g <- tax$Genus[i]
-
-  counts <- otu[i, , drop = FALSE]
-
-  if(sum(counts) == 0) next
-
-  mat <- t(counts)
-
-  bc <- vegdist(mat, method = "bray")
-
-  bc_df <- melt(as.matrix(bc),
-                varnames = c("Sample1","Sample2"),
-                value.name = "BC_Dissimilarity")
+                value.name = "BC_Distance")
 
   geo_df <- melt(as.matrix(geo_dist),
                  varnames = c("Sample1","Sample2"),
@@ -642,210 +507,429 @@ for(i in 1:nrow(otu)){
 
   df <- merge(bc_df, geo_df, by = c("Sample1","Sample2"))
 
-  df$BC_Similarity <- 1 - df$BC_Dissimilarity
-
+  # Clean
   df <- df %>%
     filter(Sample1 != Sample2) %>%
-    mutate(
-      pair_min = pmin(as.character(Sample1), as.character(Sample2)),
-      pair_max = pmax(as.character(Sample1), as.character(Sample2))
-    ) %>%
+    mutate(pair_min = pmin(as.character(Sample1), as.character(Sample2)),
+           pair_max = pmax(as.character(Sample1), as.character(Sample2))) %>%
     distinct(pair_min, pair_max, .keep_all = TRUE)
 
-  df$abund1 <- counts[, df$Sample1]
-  df$abund2 <- counts[, df$Sample2]
+  # Convert to similarity for plotting
+  df$BC_Similarity <- 1 - df$BC_Distance
+
+  ### -----------------------------
+  ### Add region categories
+  ### -----------------------------
+  df$region1 <- region_map[df$Sample1]
+  df$region2 <- region_map[df$Sample2]
 
   df <- df %>%
-    filter(!(abund1 == 0 & abund2 == 0))
+    mutate(
+      Comparison = case_when(
+        region1 == "east" & region2 == "east" ~ "within east",
+        region1 == "west" & region2 == "west" ~ "within west",
+        region1 != region2 ~ "between regions"))
 
-  if(nrow(df) < 10) next
+  df$Genus <- g
+  plot_list[[g]] <- df
 
-  model <- lm(BC_Similarity ~ geo_Distance, data = df)
-
-  genus_results <- rbind(
-    genus_results,
-    data.frame(
-      genus = as.character(g),
-      slope = as.numeric(coef(model)[2]),
-      r2 = as.numeric(summary(model)$r.squared),
-      stringsAsFactors = FALSE
+  ### -----------------------------
+  ### Fit models per category
+  ### -----------------------------
+  slopes <- df %>%
+    group_by(Comparison) %>%
+    filter(n() > 5) %>%
+    summarise(
+      slope = coef(lm(BC_Similarity ~ geo_Distance))[2],
+      intercept = coef(lm(BC_Similarity ~ geo_Distance))[1],
+      r2 = summary(lm(BC_Similarity ~ geo_Distance))$r.squared,
+      n_pairs = n(),
+      mean_similarity = mean(BC_Similarity, na.rm = TRUE),
+      .groups = "drop"
     )
-  )
+
+  slopes$Genus <- g
+  results_list[[g]] <- slopes
 }
 
-genus_results$slope <- as.numeric(genus_results$slope)
-genus_results$r2 <- as.numeric(genus_results$r2)
+### -----------------------------
+### 3. Combine outputs
+### -----------------------------
+plot_df <- bind_rows(plot_list)
+genus_results <- bind_rows(results_list)
 
-genus_results <- genus_results %>%
-  filter(!is.na(slope))
+### -----------------------------
+### 5. Plot
+### -----------------------------
+line_colors <- c(
+  "within east" = "#5ab4ac",
+  "within west" = "#d8b365",
+  "between regions" = "#D85F64"
+)
 
-head(genus_results)
+line_colors2 <- darken(line_colors, 0.3)
+base_colors  <- lighten(line_colors, 0.3)
 
-top_genera <- genus_results %>%
-  arrange(slope) %>%
-  dplyr::slice(1:50)
+ggplot(plot_df, aes(x = geo_Distance, y = BC_Similarity)) +
 
-top_names <- top_genera$genus
-
-plot_df <- data.frame()
-
-for(g in top_names){
-
-  ps_g <- subset_taxa(ps3, Genus == g)
-
-  otu_g <- as(otu_table(ps_g), "matrix")
-
-  if(!taxa_are_rows(ps_g)){
-    otu_g <- t(otu_g)
-  }
-
-  bc <- vegdist(t(otu_g), method = "bray")
-
-  melted_BC <- melt(as.matrix(bc),
-                    varnames = c("Sample1","Sample2"),
-                    value.name = "BC_Dissimilarity")
-
-  melted_geo <- melt(as.matrix(geo_dist),
-                     varnames = c("Sample1","Sample2"),
-                     value.name = "geo_Distance")
-
-  melted_diffs <- merge(melted_BC, melted_geo,
-                        by = c("Sample1","Sample2"))
-
-  melted_diffs$BC_Similarity <- 1 - melted_diffs$BC_Dissimilarity
-
-  melted_diffs <- melted_diffs %>%
-    filter(Sample1 != Sample2) %>%
-    mutate(
-      pair_min = pmin(as.character(Sample1), as.character(Sample2)),
-      pair_max = pmax(as.character(Sample1), as.character(Sample2))
-    ) %>%
-    distinct(pair_min, pair_max, .keep_all = TRUE)
-
-  abund <- colSums(otu_g)
-
-  melted_diffs$abund1 <- abund[melted_diffs$Sample1]
-  melted_diffs$abund2 <- abund[melted_diffs$Sample2]
-
-  melted_diffs <- melted_diffs %>%
-    filter(!(abund1 == 0 & abund2 == 0))
-
-  region_map <- setNames(meta$Region, meta$labtracking)
-
-  melted_diffs$region1 <- region_map[melted_diffs$Sample1]
-  melted_diffs$region2 <- region_map[melted_diffs$Sample2]
-
-  melted_diffs$same_region <- melted_diffs$region1 == melted_diffs$region2
-
-  range.use <- function(x,min.use,max.use){
-    (x - min(x,na.rm=T)) /
-      (max(x,na.rm=T)-min(x,na.rm=T)) *
-      (max.use - min.use) + min.use
-  }
-
-  melted_diffs$dist_scaled <- range.use(melted_diffs$geo_Distance, 0, 1)
-
-  print(summary(melted_diffs$geo_Distance,
-                by = melted_diffs$same_region))
-
-  melted_diffs$genus <- g
-
-  plot_df <- rbind(plot_df, melted_diffs)
-}
-
-line_colors <- c("TRUE" = "#762a83",
-                 "FALSE" = "#b2182b")
-
-base_colors <- colorspace::lighten(line_colors, 0.3)
-
-ggplot(plot_df,
-       aes(x = geo_Distance,
-           y = BC_Similarity)) +
-
-  geom_point(aes(color = same_region),
-             size = 1.5,
-             alpha = 0.5) +
-
+  geom_point(aes(color = Comparison), size = 1.5, alpha = 0.5) +
   scale_color_manual(values = base_colors, guide = "none") +
 
   ggnewscale::new_scale_color() +
 
-  geom_smooth(aes(color = same_region),
-              method = "lm",
-              se = FALSE,
-              linewidth = 1) +
+  geom_smooth(aes(color = Comparison), method = "lm", se = FALSE, linewidth = 1.2) +
+  scale_color_manual(values = line_colors2) +
 
-  scale_color_manual(values = line_colors) +
-
-  facet_wrap(~genus, scales = "free_y") +
+  facet_wrap(~Genus, scales = "free_y") +
 
   theme_bw() +
-
   labs(
     x = "Distance (km)",
-    y = "BC Similarity",
-    color = "Same Region"
+    y = "Bray-Curtis Similarity",
+    color = "Comparison"
+  )
+```
+
+genus pheno
+```{r}
+### ---------------------------
+### 1. Extract phyloseq data
+### ---------------------------
+
+# OTU table (taxa as rows)
+otu <- otu_table(ps3)
+if (!taxa_are_rows(otu)) otu <- t(otu)
+otu <- as(otu, "matrix")
+
+# Metadata
+meta <- as.data.frame(sample_data(ps3))
+
+# Taxonomy
+tax <- as.data.frame(tax_table(ps3))
+
+# Region vector
+region_vec <- meta$Region
+names(region_vec) <- rownames(meta)
+
+### ---------------------------
+### 2. Sum abundance by region
+### ---------------------------
+
+east_samples <- names(region_vec[region_vec == "east"])
+west_samples <- names(region_vec[region_vec == "west"])
+
+east_counts <- rowSums(otu[, east_samples, drop = FALSE])
+west_counts <- rowSums(otu[, west_samples, drop = FALSE])
+
+asv_counts <- data.frame(
+  ASV = rownames(otu),
+  east = east_counts,
+  west = west_counts
+)
+
+# classify ASVs
+asv_counts <- asv_counts %>%
+  mutate(
+    RegionClass = case_when(
+      east > 0 & west > 0 ~ "both",
+      east > 0 ~ "east",
+      west > 0 ~ "west",
+      TRUE ~ NA_character_
+    )
+  )
+
+# join taxonomy
+tax$ASV <- rownames(tax)
+df <- left_join(asv_counts, tax, by = "ASV")
+
+
+### ---------------------------
+### 4. Load functional (GTDB) data
+### ---------------------------
+
+con <- file('gtdb_genus_summary.jsonl.gz', open = 'r')
+data <- stream_in(con)
+close(con)
+
+df_func <- lapply(seq_len(nrow(data)), function(i) {
+  fam <- data$tax_name[i]
+  s <- data$summaries[[i]]
+
+  s$pct_true <- s$percentages$true
+  s$pct_false <- s$percentages$false
+  s$percentages <- NULL
+
+  s$family <- fam
+  s
+}) |> bind_rows()
+
+df_func <- df_func |> select(family, everything())
+
+### ---------------------------
+### 5. Filter for gene count trait
+### ---------------------------
+
+df_gene_count <- df_func %>%
+  filter(name == "estimated gene count") %>%
+  filter(family %in% df$Genus) 
+
+### ---------------------------
+### 6. Merge ecology + function
+### ---------------------------
+
+plot_df1 <- df %>%
+  left_join(
+    df_gene_count %>% 
+      select(family, majority_label_gene_count = majority_label),
+    by = c("Genus" = "family")
+  )
+
+# numeric gene count
+plot_df1$gene_count <- as.numeric(gsub("[^0-9.]", "", plot_df1$majority_label_gene_count))
+
+
+### ---------------------------
+### 7. Filter for obligate anaerobic
+### ---------------------------
+unique(df_func$name)
+
+df_ob_ana <- df_func %>%
+  filter(name == "obligate anaerobic") %>%
+  filter(family %in% df$Genus) %>%
+  mutate(
+    verdict_ob_ana = case_when(
+      grepl("^true", majority_label, ignore.case = TRUE) ~ "true",
+      grepl("^false", majority_label, ignore.case = TRUE) ~ "false",
+      grepl("No robust majority", majority_label, ignore.case = TRUE) ~ "no_robust_majority"
+    )
+  )
+
+### ---------------------------
+### 8. Merge ecology + obligate anaerobic
+### ---------------------------
+
+plot_df1 <- plot_df1 %>%
+  left_join(
+    df_ob_ana %>% 
+      select(family, majority_label_ob_ana = majority_label, verdict_ob_ana, pct_true_ob_ana = pct_true),
+    by = c("Genus" = "family")
+  )
+
+### ---------------------------
+### 9. Filter for obligate aerobic
+### ---------------------------
+
+df_ob_aer <- df_func %>%
+  filter(name == "obligate aerobic") %>%
+  filter(family %in% df$Genus) %>%
+  mutate(
+    verdict_ob_aer = case_when(
+      grepl("^true", majority_label, ignore.case = TRUE) ~ "true",
+      grepl("^false", majority_label, ignore.case = TRUE) ~ "false",
+      grepl("No robust majority", majority_label, ignore.case = TRUE) ~ "no_robust_majority"
+    )
+  )
+
+### ---------------------------
+### 8. Merge ecology + obligate aerobic
+### ---------------------------
+
+plot_df1 <- plot_df1 %>%
+  left_join(
+    df_ob_aer %>% 
+      select(family, majority_label_ob_aer = majority_label, verdict_ob_aer, pct_true_ob_aer = pct_true),
+    by = c("Genus" = "family")
   )
 ```
 
 ```{r}
-con <- file('gtdb_genus_summary.jsonl.gz', open = 'r')
-top20 = top_genera
-top20_1 = top20
+# =========================
+# 1. TREE + TAXONOMY
+# =========================
+tree <- phy_tree(ps3)
 
-data <- stream_in(con)
-close(con)
-head(data)
-str(data$summaries[[1]])
-
-df <- lapply(seq_len(nrow(data)), function(i) {
-  fam <- data$tax_name[i]
-  s <- data$summaries[[i]]
-
-# flatten the nested percentages dataframe
-s$pct_true <- s$percentages$true
-s$pct_false <- s$percentages$false
-s$percentages <- NULL
-
-s$family <- fam
-s
-}) |> dplyr::bind_rows()
-
-# move family to front
-df <- df |> dplyr::select(family, everything())
-
-names <- unique(df$name)
-
-df_ob_aer = df[df$name == 'gene count',]
-df_ob_aer = df_ob_aer[df_ob_aer$family %in% top20$genus, ]
-df_ob_aer <- df_ob_aer |>
-  dplyr::mutate(verdict = dplyr::case_when(
-    grepl("^true",majority_label, ignore.case = TRUE) ~ "true",
-    grepl("^false",majority_label, ignore.case = TRUE) ~ "false",
-    grepl("No robust majority", majority_label, ignore.case = TRUE) ~ "no_robust_majority"
-))
-head(top20)
-
-top20_1 <- top20 |>
-  dplyr::left_join(
-    df_ob_aer |> dplyr::select(family, majority_label, verdict, pct_true),
-    by = c('genus' = 'family')
+tax_df <- data.frame(
+  ASV = taxa_names(ps3),
+  Genus = as.character(tax_table(ps3)[, "Genus"]),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    Genus = trimws(Genus),
+    Genus = ifelse(is.na(Genus) | Genus == "", "Unknown", Genus)
   )
-top20_1$majority_number <- as.numeric(gsub("[^0-9.]", "", top20_1$majority_label))
-#distance decay slope cuz why not
-#cor.test(top20_1$pct_true, top20_1$slope, method = 'spearman')
 
-ggplot(top20_1, aes(x = majority_number, y = slope, color = r2)) +
-  geom_point(size = 3, alpha = 0.8) +
-  geom_text_repel(aes(label = genus), size = 3, max.overlaps = 20) +
-  #scale_x_continuous(limits = c(0, 100), breaks = seq(0, 100, 20)) +
-  labs(
-    x = 'gene count',
-    y = 'distance decay slope'
+# =========================
+# 2. DATA CLEANING
+# =========================
+cap <- function(x, q = 0.98){
+  lim <- quantile(x, q, na.rm = TRUE)
+  pmin(x, lim)
+}
+
+ring_df <- plot_df1 %>%
+  mutate(
+    ASV = as.character(ASV),
+    east = log1p(cap(east)),
+    west = log1p(cap(west)),
+    gene_count = cap(gene_count),
+    obligate_anaerobic = cap(pct_true_ob_ana)
+  ) %>%
+  filter(ASV %in% tree$tip.label) %>%
+  mutate(
+    RegionClass = case_when(
+      tolower(RegionClass) == "east" ~ "East",
+      tolower(RegionClass) == "west" ~ "West",
+      tolower(RegionClass) == "both" ~ "Both",
+      TRUE ~ NA_character_
+    )
+  )
+
+# =========================
+# 3. BASE TREE (FADED)
+# =========================
+p <- ggtree(
+  tree,
+  layout = "circular",
+  size = 0.15,
+  color = "grey80"
+) %<+% tax_df
+
+# =========================
+# 4. RING GEOMETRY
+# =========================
+# ring index system
+ring_positions <- c(
+  east = 1,
+  west = 2,
+  region = 3,
+  gene = 4,
+  anaerobic = 5
+)
+
+w <- 0.20
+# =========================
+# 5. DATA RINGS
+# =========================
+
+# EAST
+p <- p + new_scale_fill() +
+  geom_fruit(
+    data = ring_df,
+    geom = geom_tile,
+    aes(y = ASV, x = ring_positions["east"] * w + 1, fill = east),
+    width = w,offset = 0  
   ) +
-  #guides(color = "none")+
-  theme_bw() #+ scale_color_manual(values = phylum_colors)# <-- same
+  scale_fill_viridis_c(
+    option = "mako",
+    na.value = "white",
+    name = "East (log)"
+  )
+
+# WEST
+p <- p + new_scale_fill() +
+  geom_fruit(
+    data = ring_df,
+    geom = geom_tile,
+    aes(y = ASV, x = ring_positions["west"] * w + 1, fill = west),
+    width = w,offset = 0  
+  ) +
+  scale_fill_viridis_c(
+    option = "rocket",
+    na.value = "white",
+    name = "West (log)"
+  )
+
+# REGION
+p <- p + new_scale_fill() +
+  geom_fruit(
+    data = ring_df,
+    geom = geom_tile,
+    aes(y = ASV, x = ring_positions["region"] * w + 1, fill = RegionClass),
+    width = w
+  ) +
+  scale_fill_manual(
+    values = c(
+      "East" = "#1b9e77",
+      "West" = "#d95f02",
+      "Both" = "#7570b3"
+    ),
+    na.value = "white",
+    name = "Region"
+  )
+
+# GENE COUNT
+p <- p + new_scale_fill() +
+  geom_fruit(
+    data = ring_df,
+    geom = geom_tile,
+    aes(y = ASV, x = ring_positions["gene"] * w + 1, fill = gene_count),
+    width = w
+  ) +
+  scale_fill_viridis_c(
+    option = "inferno",
+    na.value = "white",
+    name = "Gene count"
+  )
+
+# ANAEROBIC
+p <- p + new_scale_fill() +
+  geom_fruit(
+    data = ring_df,
+    geom = geom_tile,
+    aes(y = ASV, x = ring_positions["anaerobic"] * w + 1, fill = obligate_anaerobic),
+    width = w 
+  ) +
+  scale_fill_viridis_c(
+    option = "plasma",
+    na.value = "white",
+    name = "Obligate anaerobic"
+  )
+
+# =========================
+# 6. GENUS LABELS (PUBLICATION STYLE)
+# =========================
+
+genus_nodes <- tax_df %>% 
+  filter(Genus != "Unknown") %>% 
+  group_by(Genus) %>% 
+  filter(n() > 10) %>% 
+  summarise(node = getMRCA(tree, ASV), .groups = "drop") %>%
+  filter(!is.na(node)) 
+
+label_offset <- 1 + 5*0.1
+
+for(i in seq_len(nrow(genus_nodes))){
+  
+  p <- p +
+    geom_cladelab(
+      node = genus_nodes$node[i],
+      label = genus_nodes$Genus[i],
+      
+      offset = label_offset,     # 🔥 push OUTSIDE rings
+      offset.text = 0.01,
+      
+      align = TRUE,              # 🔥 key for readability
+      linetype = 1,
+      barsize = 0.3,
+      
+      fontsize = 2.5,            # slightly larger
+      fontface = "italic",
+      angle = "auto"
+    )
+}
+# =========================
+# 7. FINAL THEME
+# =========================
+p +
+  theme_void() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 9),
+    plot.margin = margin(10, 30, 10, 10)
+  )
 ```
+
 
 phyloseq import again. did a ton of manipulation and want to start fresh to be sure
 ```{r}
@@ -944,6 +1028,13 @@ shared_df <- shared_df %>%
     )
   )
 
+# duplicate data for "all" category
+all_df <- shared_df %>%
+  dplyr::mutate(Comparison = "all")
+
+# combine
+plot_df <- dplyr::bind_rows(shared_df, all_df)
+
 summary <- shared_df %>%
   group_by(Comparison) %>%
   summarise(mean_percent = mean(PercentShared), .groups = "drop")
@@ -951,29 +1042,30 @@ summary <- shared_df %>%
 print(summary)
 
 
-# 6. Plot
-ggplot(shared_df, aes(x = Comparison, y = PercentShared, fill = Comparison)) +
+ggplot(plot_df, aes(x = Comparison, y = PercentShared, fill = Comparison)) +
   geom_violin(trim = FALSE) +
-  geom_jitter(aes(color = Comparison),width = 0.15, size = 1,shape = 21,color = "black",  ) +
+  geom_jitter(aes(color = Comparison),
+              width = 0.15, size = 1, shape = 21, color = "black") +
   theme_bw() +
   labs(
     x = NULL,
     y = "Percent shared ASVs"
   ) +
   scale_fill_manual(values = c(
-    "#D85F64",
-    "#5ab4ac",
-    "#d8b365"
+    "all" = "#762a83",
+    "within east" = "#5ab4ac",
+    "within west" = "#d8b365",
+    "between regions (east vs west)" = "#D85F64"
   )) +
   scale_color_manual(values = c(
-    "#D85F64",
-    "#5ab4ac",
-    "#d8b365"
+    "all" = "#762a83",
+    "within east" = "#5ab4ac",
+    "within west" = "#d8b365",
+    "between regions (east vs west)" = "#D85F64"
   )) +
-  #guides(fill = "none") +
   theme(
     axis.title.y = element_text(size = 16),
-    axis.text.x  = element_blank(),
+    axis.text.x  = element_blank(),  # show labels now that "all" exists
     axis.text.y  = element_text(size = 14)
   )
 ```
@@ -1120,16 +1212,6 @@ bac_nmds <- ggplot(meta, aes(x = Axis01, y = Axis02)) +
 bac_nmds
 ```
 
-dbmem
-#there is spatial autocorrelation 
-```{r}
-dbrda1<- dbrda(ps_bc_dist ~ decimalLatitude + decimalLongitude + Region, data = meta, distance = "bray")
-
-
-anova1<-anova(dbrda1, by="margin", permutation = 9999)
-anova1
-```
-
 Bayesian Generalized (Non-)Linear Multivariate Multilevel Models
 ```{r}
 #### Create metadata -------------
@@ -1137,101 +1219,132 @@ Bayesian Generalized (Non-)Linear Multivariate Multilevel Models
 #ps_bc_dist
 #ps_sor_dist
 
-melted_BC <- reshape2::melt(as.matrix(ps_sor_dist), varnames = c("Sample1", "Sample2"), value.name = "BC_Dissimilarity")
+### =========================
+### 1. Melt distance matrices
+### =========================
 
-melted_geo <- reshape2::melt(as.matrix(geo_dist), varnames = c("Sample1", "Sample2"), value.name = "geo_Distance")
-
-unique(melted_BC$Sample1 == melted_geo$Sample1)
-unique(melted_BC$Sample2 == melted_geo$Sample2) # Ok
-
-#### Reshape
-melted_diffs = melted_geo
-melted_diffs$BC_Dissimilarity = melted_BC$BC_Dissimilarity
-
-### convert into similarity
-#melted_diffs$geo_Similarity = 1 - melted_diffs$geo_Dissimilarity
-melted_diffs$BC_Similarity = 1 - melted_diffs$BC_Dissimilarity
-
-#### remove half of the dataset
-melted_diffs <- melted_diffs %>%
-  filter(Sample1 != Sample2) %>%
-  mutate(pair_min = pmin(as.character(Sample1), as.character(Sample2)),
-         pair_max = pmax(as.character(Sample1), as.character(Sample2))) %>%
-  distinct(pair_min, pair_max, .keep_all = TRUE) %>%
-  dplyr::select(Sample1, Sample2, geo_Distance,BC_Similarity )
-
-# Create a vector mapping sample -> region
-region_map <- setNames(meta$Region, meta$labtracking)
-
-# Use match (or the vector) to get the regions
-melted_diffs$region1 <- region_map[melted_diffs$Sample1]
-melted_diffs$region2 <- region_map[melted_diffs$Sample2]
-
-# Check if they are in the same region
-melted_diffs$compairson <- ifelse(
-  melted_diffs$region1 == "east" & melted_diffs$region2 == "east", "within east",
-  ifelse(
-    melted_diffs$region1 == "west" & melted_diffs$region2 == "west", "within west",
-    "between regions (east vs west)"
-  )
+melted_BC <- melt(
+  as.matrix(ps_bc_dist),
+  varnames = c("Sample1", "Sample2"),
+  value.name = "BC_Dissimilarity"
 )
 
-melted_diffs$same_region <- melted_diffs$region1 == melted_diffs$region2
+melted_geo <- melt(
+  as.matrix(geo_dist),
+  varnames = c("Sample1", "Sample2"),
+  value.name = "geo_Distance"
+)
 
-range.use <- function(x,min.use,max.use){ (x - min(x,na.rm=T))/(max(x,na.rm=T)-min(x,na.rm=T)) * (max.use - min.use) + min.use }
+### =========================
+### 2. SAFE merge
+### =========================
+melted_diffs <- left_join(
+  melted_geo,
+  melted_BC,
+  by = c("Sample1", "Sample2")
+)
 
-melted_diffs$dist_scaled <- range.use(melted_diffs$geo_Distance, 0, 1)
-
-summary(melted_diffs$geo_Distance, by = compairson)
-
-#slope = change in similarity per 1 SD of 100 km distances
-
-#With z-scores:
-#mean ≈ 0 in East and West
-#sd ≈ 1 in each region
-#which is much closer to a biological decay rate.
+### =========================
+### 3. Convert to similarity
+### =========================
 melted_diffs <- melted_diffs %>%
-  #group_by(same_region) %>%
   mutate(
+    BC_Similarity = 1 - BC_Dissimilarity
+  )
+
+### =========================
+### 4. Remove duplicates + self-comparisons
+### =========================
+melted_diffs <- melted_diffs %>%
+  filter(Sample1 != Sample2) %>%
+  mutate(
+    pair_min = pmin(as.character(Sample1), as.character(Sample2)),
+    pair_max = pmax(as.character(Sample1), as.character(Sample2))
+  ) %>%
+  distinct(pair_min, pair_max, .keep_all = TRUE) %>%
+  select(Sample1, Sample2, geo_Distance, BC_Similarity)
+
+### =========================
+### 5. Add region metadata
+### =========================
+region_map <- setNames(meta$Region, meta$labtracking)
+
+melted_diffs <- melted_diffs %>%
+  mutate(
+    region1 = region_map[Sample1],
+    region2 = region_map[Sample2],
+    compairson = case_when(
+      region1 == "east" & region2 == "east" ~ "within east",
+      region1 == "west" & region2 == "west" ~ "within west",
+      TRUE ~ "between regions (east vs west)"
+    ),
+    same_region = region1 == region2
+  )
+
+### =========================
+### 6. Scale distance
+### =========================
+range.use <- function(x, min.use, max.use) {
+  (x - min(x, na.rm = TRUE)) /
+    (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)) *
+    (max.use - min.use) + min.use
+}
+
+melted_diffs <- melted_diffs %>%
+  mutate(
+    dist_scaled = range.use(geo_Distance, 0, 1),
     dist_100 = geo_Distance / 100,
     dist_z = as.numeric(scale(dist_100))
-  ) %>%
-  ungroup()
+  )
 
-#install.packages("ggnewscale")  # once
+### =========================
+### 7. Clean factor levels
+### =========================
+melted_diffs$compairson <- factor(
+  melted_diffs$compairson,
+  levels = c("within east", "within west", "between regions (east vs west)")
+)
+
+### =========================
+### 8. Colors 
+### =========================
+library(colorspace)
 library(ggnewscale)
 
-#install.packages("colorspace")  # once
-library(colorspace)
-line_colors <- c('between regions (east vs west)' ="#D85F64",
-                 'within east'="#5ab4ac",
-                 'within west'="#d8b365") 
+base_colors <- c(
+  "within east" = "#5ab4ac",
+  "within west" = "#d8b365",
+  "between regions (east vs west)" = "#D85F64"
+)
 
-#line_colors <- darken(base_colors, 0.3)
-base_colors <- lighten(line_colors, 0.3 )
-ggplot(melted_diffs, aes(x = geo_Distance, y = BC_Similarity)) +
+line_colors <- darken(base_colors, 0.3)
 
-  # Points (light colors)
+### =========================
+### 9. Plot 
+### =========================
+p <- ggplot(melted_diffs, aes(x = geo_Distance, y = BC_Similarity)) +
+
+  # points
   geom_point(aes(color = compairson), size = 2, alpha = 0.5) +
   scale_color_manual(values = base_colors, guide = "none") +
 
   ggnewscale::new_scale_color() +
 
-  # Lines (darker colors)
-  geom_smooth(aes(color = compairson),
-              method = "lm",
-              se = FALSE,
-              linewidth = 1.2) +
-  scale_color_manual(values = line_colors) +
+  # group-specific lines
+  geom_smooth(
+    aes(color = compairson),
+    method = "lm",
+    se = FALSE,
+    linewidth = 1.2
+  ) +
+  scale_color_manual(values = line_colors, name = "Comparison") +
 
-  theme_bw() +
-    labs(
+  labs(
     x = "Distance (km)",
-    #y = "Bray Curtis Similarity",
-    y = "Sorensen Similarity ",
-    color = "Same Regions"
+    y = "Bray-Curtis Similarity"
   ) +
 
+  theme_bw() +
   theme(
     axis.title = element_text(size = 13),
     axis.text  = element_text(size = 11),
@@ -1239,20 +1352,34 @@ ggplot(melted_diffs, aes(x = geo_Distance, y = BC_Similarity)) +
     legend.text  = element_text(size = 11)
   )
 
-#library(brms)
+print(p)
 
-#model <- brm(BC_Similarity~1+dist_scaled * same_region +
-#            (1|mm(Sample1,Sample2)),
-#              data = melted_diffs,
-#              #family= "Beta",
-#              warmup = 2000, iter = 6000,
-#              threads = threading(6),
-#              cores = 24,
-#              chains = 4,
-#              control=list(adapt_delta=0.95),
-#              init=0)
+### =========================
+### 10. Prepare for BRMS 
+### =========================
+# Avoid exact 0/1 for Beta regression
+n <- nrow(melted_diffs)
+melted_diffs$BC_Similarity <- (melted_diffs$BC_Similarity * (n - 1) + 0.5) / n
 
-#cor(melted_diffs$dist_scaled, as.numeric(melted_diffs$same_region))
+### =========================
+### 11. Model (FIXED)
+### =========================
+library(brms)
+
+model <- brm(
+  BC_Similarity ~ 1 + dist_scaled * compairson +
+    (1 | mm(Sample1, Sample2)),
+  data = melted_diffs,
+  family = Beta(),
+  warmup = 2000,
+  iter = 6000,
+  chains = 4,
+  cores = 4,              # safer default; increase if stable
+  threads = threading(4),
+  control = list(adapt_delta = 0.95),
+  init = 0
+)
+summary(model)
 
 #Scale distance within region
 #Use || for random slopes
@@ -1304,7 +1431,7 @@ ggplot(melted_diffs, aes(x = geo_Distance, y = BC_Similarity)) +
 #             threads = threading(6),
 #             control = list(adapt_delta = 0.99,max_treedepth = 15))
 
-#summary(model)
+
 ```
 
 
