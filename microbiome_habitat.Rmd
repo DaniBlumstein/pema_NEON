@@ -169,26 +169,6 @@ meta$decimalLatitude <- as.numeric(meta$decimalLatitude)
 meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
 ```
 
-top 20 
-```{r}
-colnames(tax_table(ps))
-ps_genus <- tax_glom(ps, taxrank = "Genus")
-
-# Remove uncultured / unclassified / unidentified taxa
-ps_genus <- subset_taxa(
-  ps_genus,
-  !grepl(
-    "uncultured|unclassified|unidentified|unknown",
-    Genus,
-    ignore.case = TRUE
-  )
-)
-
-ps_genus_rel <- transform_sample_counts(ps_genus, function(x) x / sum(x))
-top20 <- names(sort(taxa_sums(ps_genus_rel), decreasing = TRUE))[1:20]
-ps_top20 <- prune_taxa(top20, ps_genus_rel)
-```
-
 geographic distance
 ```{r}
 # -----------------------------
@@ -214,8 +194,8 @@ ANCOMBC
 ps2 <- subset_taxa(
   ps,
   !grepl(
-    "uncultured|unclassified|unidentified|unknown",
-    Species,
+    "uncultured|unclassified|unidentified|unknown|uncultured",
+    Genus,
     ignore.case = TRUE
   )
 )
@@ -317,26 +297,43 @@ melted$variable = factor(melted$variable, levels = rev(results_sig$ASVname))
 
 ASV by genus trees
 ```{r}
+# 1. Agglomerate taxa to Genus level
+#ps_genus <- tax_glom(ps2, taxrank = "Genus")
+
+# 2. Get names of top 10 genera by total abundance
+top10_names <- names(sort(taxa_sums(ps_genus), decreasing = TRUE))[1:10]
+#bottom10_names <- names(sort(taxa_sums(ps_genus), decreasing = FALSE)[1:10])
+
+# 3. Prune the object to keep only these 10 (optional)
+#ps_bottom10 <- prune_taxa(bottom10_names, ps_genus)
+
+# 4. View the Taxa Table for these bottom 10
+#tax_table(ps_bottom10)
+
+# 3. Prune the agglomerated object to only these 10
+ps_top10 <- prune_taxa(top10_names, ps_genus)
+tax_table(ps_top10)
+
 # Assign taxa names
 taxa_names(ps2) <- TAXtab$ASVname
 
-unique(TAXtab$Genus)
-
-# Remove taxa with NA genus
-ps_clean <- subset_taxa(ps2, !is.na(Genus))
 
 # Select genus of interest
-g <- "Lactobacillus"
+g <- "Incertae_Sedis"
 
 # Subset phyloseq object for that genus
-ps_g <- subset_taxa(ps_clean, Genus == g)
+ps_g <- subset_taxa(ps2, Genus == g)
 
 # Create tree plot
 tree_plot <- ggtree(phy_tree(ps_g))
 
+asvtree<- phy_tree(ps_g)
+plotTree(phy_tree(ps_g),fsize=0.8,ftype="i",
+    lwd=1)
+
 # Extract OTU and Region information
 tree_df <- psmelt(ps_g) %>%
-  select(OTU, Region) %>%
+  dplyr::select(OTU, Region,Abundance) %>%
   filter(!is.na(Region)) %>%
   distinct()
 
@@ -362,7 +359,7 @@ clade_labels <- tip_positions %>%
 
 # Plot tree with tip points and labels
 p <- tree_plot %<+% tree_df +
-  geom_tippoint(aes(color = Region), size = 2.5, alpha = 0.5, position = position_nudge(x = 0.003)) +
+  geom_tippoint(aes(color = Region),alpha = 0.5, size = 2.5, position = position_nudge(x = 0.003)) +
   geom_tiplab(
     aes(label = label_name),
     size = 5,
@@ -382,54 +379,117 @@ p <- tree_plot %<+% tree_df +
   ) +
   coord_flip(clip = "off") +
   expand_limits(x = max(tree_plot$data$x) + 0.05)
-
-# Display plot
 p
+```
 
-# Assign taxa names
-taxa_names(ps2) <- TAXtab$ASVname
+ASV phylo signal 
+```{r}
+# =========================================================
+# EXTRACT TREE
+# =========================================================
+tree <- as.phylo(asvtree)
+tree$node.label <- NULL
 
-# Remove taxa with NA genus
-ps_clean <- subset_taxa(ps2, !is.na(Genus))
+# =========================================================
+# BUILD RAW EAST / WEST COUNTS
+# =========================================================
+trait_df <- tree_df %>%
+  group_by(OTU) %>%
+  summarise(
+    east = sum(Region == "east"),
+    west = sum(Region == "west"),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    total = east + west,
+    
+    prop_east = ifelse(total > 0, east / total, NA),
+    prop_west = ifelse(total > 0, west / total, NA)
+  )
 
-# Subset phyloseq object for that genus
-ps_g <- subset_taxa(ps_clean, Genus == g)
+trait_df <- trait_df %>%
+  mutate(region_bias = prop_east - prop_west)
 
-# Create tree plot
-tree_plot <- ggtree(phy_tree(ps_g))
+#Range:
+# -1 → fully West
+#  0 → mixed
+# +1 → fully East
 
-# Extract OTU and Region information
-tree_df <- psmelt(ps_g) %>%
-  select(OTU, Region) %>%
-  filter(!is.na(Region)) %>%
-  distinct()
 
-# Add taxonomy name (all labels)
-tree_df$label_name <- TAXtab[match(tree_df$OTU, TAXtab$ASVname), "name"]
+# =========================================================
+# ALIGN TO TREE
+# =========================================================
+trait_df <- trait_df[trait_df$OTU %in% tree$tip.label, ]
+trait_df <- trait_df[!duplicated(trait_df$OTU), ]
 
-# Plot tree with tip points and labels
-p <- tree_plot %<+% tree_df +
-  geom_tippoint(aes(color = Region), size = 2.5, alpha = 0.5, position = position_nudge(x = 0.003)) +
-  geom_tiplab(
-    aes(label = label_name),
-    size = 2,
-    angle = 90,
-    hjust = 0,
-    offset = 0.005,
-    na.rm = TRUE
-  ) +
-  scale_color_manual(values = east_west_colors) +
-  ggtitle(g) +
-  theme_tree2() +
-  theme(
-    plot.title = element_blank(),
-    legend.position = "right",
-    legend.title = element_text(size = 11),
-    legend.text = element_text(size = 10)
-  ) +
-  coord_flip(clip = "off") 
+# IMPORTANT: matrix format required
+trait_mat <- trait_df %>%
+  dplyr::select(east, west,region_bias) %>%
+  as.matrix()
 
-p
+rownames(trait_mat) <- trait_df$OTU
+
+# reorder to match tree
+trait_mat <- trait_mat[tree$tip.label, ]
+
+# remove missing tips safely
+keep <- !is.na(rowSums(trait_mat))
+
+trait_mat <- trait_mat[keep, ]
+tree2 <- drop.tip(tree, tree$tip.label[!keep])
+
+# =========================================================
+# MATCH TRAIT VECTOR TO TREE 
+# =========================================================
+
+# choose ONE trait for phylosig (must be numeric vector)
+trait_vector <- as.numeric(trait_df$region_bias)
+
+# assign names = ASV labels
+names(trait_vector) <- trait_df$OTU
+
+# align with tree tips
+trait_vector <- trait_vector[tree$tip.label]
+var(trait_vector)
+
+# prune tree to match
+tree2 <- drop.tip(tree, setdiff(tree$tip.label, names(trait_vector)))
+
+# --- FIX TREE ---
+tree2 <- drop.tip(tree, setdiff(tree$tip.label, names(trait_vector)))
+tree2$edge.length <- tree2$edge.length + 1e-6
+
+# =========================================================
+# PHYLOGENETIC SIGNAL — BLOMBERG’S K
+# =========================================================
+
+K_result <- phylosig(
+  tree2,
+  trait_vector,
+  method = "K",
+  test = TRUE,
+  nsim = 1000
+)
+
+print(K_result)
+plot(K_result)
+
+# =========================================================
+# PHYLOGENETIC SIGNAL — PAGEL’S LAMBDA
+# =========================================================
+
+lambda_result <- phylosig(
+  tree2,
+  trait_vector,
+  method = "lambda",
+  test = TRUE
+)
+
+print(lambda_result)
+plot(lambda_result)
+
+tree2$phy <- multi2di(tree2)
+
 ```
 
 dist decay by gen
@@ -647,7 +707,7 @@ df <- left_join(asv_counts, tax, by = "ASV")
 ### 4. Load functional (GTDB) data
 ### ---------------------------
 
-con <- file('gtdb_genus_summary.jsonl.gz', open = 'r')
+con <- file('gtdb_family_summary.jsonl.gz', open = 'r')
 data <- stream_in(con)
 close(con)
 
@@ -671,7 +731,7 @@ df_func <- df_func |> select(family, everything())
 
 df_gene_count <- df_func %>%
   filter(name == "genome size") %>%
-  filter(family %in% df$Genus) 
+  filter(family %in% df$Family) 
 
 ### ---------------------------
 ### 6. Merge ecology + function
@@ -681,7 +741,7 @@ plot_df1 <- df %>%
   left_join(
     df_gene_count %>% 
       select(family, majority_label_gene_count = majority_label),
-    by = c("Genus" = "family")
+    by = c("Family" = "family")
   )
 
 # numeric gene count
@@ -694,8 +754,8 @@ plot_df1$gene_count <- as.numeric(gsub("[^0-9.]", "", plot_df1$majority_label_ge
 unique(df_func$name)
 
 df_ob_ana <- df_func %>%
-  filter(name == "obligate anaerobic") %>%
-  filter(family %in% df$Genus) %>%
+  filter(name == "oxygen preference") %>%
+  filter(family %in% df$Family) %>%
   mutate(
     verdict_ob_ana = case_when(
       grepl("^true", majority_label, ignore.case = TRUE) ~ "true",
@@ -712,7 +772,7 @@ plot_df1 <- plot_df1 %>%
   left_join(
     df_ob_ana %>% 
       select(family, majority_label_ob_ana = majority_label, verdict_ob_ana, pct_true_ob_ana = pct_true),
-    by = c("Genus" = "family")
+    by = c("Family" = "family")
   )
 
 ### ---------------------------
@@ -721,7 +781,7 @@ plot_df1 <- plot_df1 %>%
 
 df_ob_aer <- df_func %>%
   filter(name == "obligate aerobic") %>%
-  filter(family %in% df$Genus) %>%
+  filter(family %in% df$Family) %>%
   mutate(
     verdict_ob_aer = case_when(
       grepl("^true", majority_label, ignore.case = TRUE) ~ "true",
@@ -738,10 +798,11 @@ plot_df1 <- plot_df1 %>%
   left_join(
     df_ob_aer %>% 
       select(family, majority_label_ob_aer = majority_label, verdict_ob_aer, pct_true_ob_aer = pct_true),
-    by = c("Genus" = "family")
+    by = c("Family" = "family")
   )
 ```
 
+circle plot
 ```{r}
 # =========================
 # 1. TREE + TAXONOMY
@@ -750,7 +811,7 @@ tree <- phy_tree(ps3)
 
 tax_df <- data.frame(
   ASV = taxa_names(ps3),
-  Genus = as.character(tax_table(ps3)[, "Genus"]),
+  Genus = as.character(tax_table(ps3)[, "Family"]),
   stringsAsFactors = FALSE
 ) %>%
   mutate(
@@ -772,7 +833,7 @@ ring_df <- plot_df1 %>%
     east = log1p(cap(east)),
     west = log1p(cap(west)),
     gene_count = cap(gene_count),
-    obligate_anaerobic = cap(pct_true_ob_ana)
+    obligate_anaerobic = majority_label_ob_ana
   ) %>%
   filter(ASV %in% tree$tip.label) %>%
   mutate(
@@ -853,7 +914,6 @@ p <- p + new_scale_fill() +
       "West" = "#d95f02",
       "Both" = "#7570b3"
     ),
-    na.value = "white",
     name = "Region"
   )
 
@@ -867,7 +927,7 @@ p <- p + new_scale_fill() +
   ) +
   scale_fill_viridis_c(
     option = "mako",
-    na.value = "white",
+    na.value = "lightgray",
     name = "Genome size"
   )
 
@@ -879,9 +939,9 @@ p <- p + new_scale_fill() +
     aes(y = ASV, x = ring_positions["anaerobic"] * w + 1, fill = obligate_anaerobic),
     width = w 
   ) +
-  scale_fill_viridis_c(
-    na.value = "white",
-    name = "Obligate anaerobic"
+  scale_fill_viridis_d(
+    na.value = "lightgray",
+    name = "Oxygen preference"
   )
 
 # =========================
@@ -891,7 +951,7 @@ p <- p + new_scale_fill() +
 genus_nodes <- tax_df %>% 
   filter(Genus != "Unknown") %>% 
   group_by(Genus) %>% 
-  filter(n() > 2) %>% 
+  filter(n() > 1) %>% 
   summarise(node = getMRCA(tree, ASV), .groups = "drop") %>%
   filter(!is.na(node)) 
 
@@ -929,7 +989,6 @@ p +
   legend.justification = c("left", "center")
   )
 ```
-
 
 phyloseq import again. did a ton of manipulation and want to start fresh to be sure
 ```{r}
@@ -1190,10 +1249,7 @@ a
 Beta diversity 
 ```{r}
 set.seed(12)
-bac.dist<-vegdist(otu_sorted, method="bray") ### this calculates BC dissimilaries
-
-set.seed(12)
-bac.nmds<-metaMDS(bac.dist, k=2, try=999)
+bac.nmds<-metaMDS(ps_sor_dist, k=2, try=999)
 bac.nmds$stress #0.21
 stress= paste("stress = ", round(bac.nmds$stress, digits = 2))
 
@@ -1204,12 +1260,14 @@ meta$Axis02<-bac.nmds$points[,2]
 bac_nmds <- ggplot(meta, aes(x = Axis01, y = Axis02)) +
   geom_point(aes(color = Region, shape = Region), size = 2, alpha = 0.8) +
   stat_ellipse(aes(fill = Region), geom = "polygon", alpha = 0.45, level = 0.68, show.legend = FALSE) +
-  scale_color_viridis_d(option = "turbo", begin = 0.05, end = 0.95) +
-  scale_fill_viridis_d(option  = "turbo", begin = 0.05, end = 0.95) +
+  scale_color_manual(values = east_west_colors) +
+  scale_fill_manual(values = east_west_colors) +
   theme_classic() +
   labs(x = "NMDS1", y = "NMDS2", shape = "Region") +
-  ggtitle("Bray Curtis dissimilarity")
+  ggtitle("Sørensen dissimilarity")
 bac_nmds
+
+
 ```
 
 Bayesian Generalized (Non-)Linear Multivariate Multilevel Models
