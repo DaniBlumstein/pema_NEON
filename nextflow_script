@@ -1,0 +1,33 @@
+#!/bin/bash
+#SBATCH -J QC
+#SBATCH -p general
+#SBATCH -N 4            # number of nodes
+#SBATCH -c 32            # number of cores
+#SBATCH --mem=128G
+#SBATCH -t 2-03:00:00   # time in d-hh:mm:ss
+#SBATCH -q public       # QOS
+#SBATCH -o slurm.%j.out # file to save job's STDOUT (%j = JobId)
+#SBATCH -e slurm.%j.err # file to save job's STDERR (%j = JobId)
+#SBATCH --mail-user="apate231@asu.edu"
+#SBATCH --mail-type=ALL # Send an e-mail when a job starts, stops, or fails
+#SBATCH --export=NONE   # Purge the job-submitting shell environment
+
+# Load required modules for job's environment
+module load mamba/latest
+source activate nextflow
+# module load openjdk-17.0.3_7-gcc-12.1.0
+module list
+
+# git clone https://github.com/PacificBiosciences/pb-16S-nf.git
+cd /data/tsuzuki7/wild_rodent/pb-16S-nf
+# nextflow run main.nf --download_db
+
+
+nextflow run main.nf  \
+  --input /data/tsuzuki7/wild_rodent/data/fastq/sample-manifest.tsv \
+  --metadata /data/tsuzuki7/wild_rodent/data/fastq/sample-metadata.tsv \
+  --outdir /data/tsuzuki7/wild_rodent/data/rodent_output \
+
+
+echo "END $(date)"
+
