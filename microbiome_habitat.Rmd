@@ -74,6 +74,7 @@ suppressPackageStartupMessages({
     library(ANCOMBC)
     library(microbiome)
     library(jsonlite)
+    library(colorspace)
 })
 ```
 
@@ -167,6 +168,12 @@ ps_sor_dist  <- vegdist(t(ps_otu), method = "bray", binary = TRUE)
 meta <- data.frame(sample_data(ps))
 meta$decimalLatitude <- as.numeric(meta$decimalLatitude)
 meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
+
+permanova <- adonis2(t(ps_otu) ~ Region,
+               data = meta, permutations=99, method = "bray")
+
+# P-value
+print(as.data.frame(permanova$aov.tab)["group", "Pr(>F)"])
 ```
 
 geographic distance
@@ -210,8 +217,8 @@ results_ancom_bc = data.frame(ASV = out$res$lfc$taxon,
                               Diff_ab =  out$res$diff_abn$Regionwest)
 results_ancom_bc$lcf = results_ancom_bc$lcf * -1
 
-results_ancom_bc$association = ifelse(results_ancom_bc$p_val < 0.05 & results_ancom_bc$lcf > 0, "east", "Not singificant")
-results_ancom_bc$association = ifelse(results_ancom_bc$p_val < 0.05 & results_ancom_bc$lcf < 0, "west",results_ancom_bc$association)
+results_ancom_bc$association = ifelse(results_ancom_bc$q_value < 0.05 & results_ancom_bc$lcf > 0, "east", "Not singificant")
+results_ancom_bc$association = ifelse(results_ancom_bc$q_value < 0.05 & results_ancom_bc$lcf < 0, "west",results_ancom_bc$association)
 
 TAXtab =as.data.frame(tax_table(ps2))
 
@@ -230,8 +237,11 @@ TAXtab$name[1:10] # ok it looks good.
 
 results_ancom_bc$ASVname = TAXtab$ASVname[match(results_ancom_bc$ASV ,rownames(TAXtab))]
 
-results_sig = results_ancom_bc[results_ancom_bc$p_val < 0.05,]
-table(results_sig$association)
+results_ancom_bc$Genus = TAXtab$Genus[match(results_ancom_bc$ASV ,rownames(TAXtab))]
+
+results_sig = results_ancom_bc[results_ancom_bc$q_value < 0.05,]
+table(results_sig$Diff_ab)
+table(results_sig$ASVname,results_sig$Diff_ab, results_sig$Genus)
 
 Sum_abundance= colSums(decostand(t(ps_otu), method = "total"))
 results_sig$sum_abundance = Sum_abundance[match(results_sig$ASV, names(Sum_abundance))]
@@ -241,13 +251,13 @@ results_sig$ASVname = factor(results_sig$ASVname, levels = rev(results_sig$ASVna
 
 ggplot(results_ancom_bc,
        aes(x = as.numeric(lcf),
-           y = -log10(as.numeric(p_val)),
+           y = -log10(as.numeric(q_value)),
            color = association)) +
   
   geom_point(size = 3, alpha = 0.9) +
   
   geom_text_repel(
-    data = subset(results_ancom_bc, p_val < 0.05),
+    data = subset(results_ancom_bc, q_value < 0.05),
     aes(label = ASVname),
     size = 4,
     max.overlaps = 20
@@ -271,7 +281,7 @@ ggplot(results_ancom_bc,
   
   labs(
     x = "Log2 Fold Change",
-    y = expression(-log[10](p-value)),
+    y = expression(-log[10](q-value)),
     title = "Differentially Abundant Taxa",
     color = "Association"
   ) +
@@ -298,7 +308,7 @@ melted$variable = factor(melted$variable, levels = rev(results_sig$ASVname))
 ASV by genus trees
 ```{r}
 # 1. Agglomerate taxa to Genus level
-#ps_genus <- tax_glom(ps2, taxrank = "Genus")
+ps_genus <- tax_glom(ps2, taxrank = "Genus")
 
 # 2. Get names of top 10 genera by total abundance
 top10_names <- names(sort(taxa_sums(ps_genus), decreasing = TRUE))[1:10]
@@ -319,7 +329,7 @@ taxa_names(ps2) <- TAXtab$ASVname
 
 
 # Select genus of interest
-g <- "Incertae_Sedis"
+g <- "Roseburia"
 
 # Subset phyloseq object for that genus
 ps_g <- subset_taxa(ps2, Genus == g)
@@ -358,28 +368,104 @@ clade_labels <- tip_positions %>%
   )
 
 # Plot tree with tip points and labels
-p <- tree_plot %<+% tree_df +
-  geom_tippoint(aes(color = Region),alpha = 0.5, size = 2.5, position = position_nudge(x = 0.003)) +
+tree_plot_flipped <- revts(tree_plot)
+
+tree_plot %<+% tree_df +
+  geom_tippoint(aes(color = Region),
+                alpha = 0.5,
+                size = 2.5) +
+
   geom_tiplab(
     aes(label = label_name),
-    size = 5,
-    angle = 90,
+    align = FALSE,     # <-- removes vertical guide lines
+    linetype = NULL,   # <-- extra safety (no lines)
+    size = 3,
+    offset = 0.01,    # <-- very small = right at tip
     hjust = 0,
-    offset = 0.005,
     na.rm = TRUE
   ) +
+
   scale_color_manual(values = east_west_colors) +
+
   ggtitle(g) +
+
   theme_tree2() +
+
   theme(
-    plot.title = element_blank(),
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
     legend.position = "right",
     legend.title = element_text(size = 11),
     legend.text = element_text(size = 10)
   ) +
-  coord_flip(clip = "off") +
-  expand_limits(x = max(tree_plot$data$x) + 0.05)
-p
+
+  expand_limits(x = max(tree_plot$data$x) + 0.02)
+```
+
+```{r}
+genus_list <- unique(tax_table(ps_top10)[, "Genus"])
+genus_list <- genus_list[!is.na(genus_list)]
+
+plot_list <- list()
+
+for (g in genus_list) {
+
+  ps_g <- subset_taxa(ps2, Genus == g)
+
+  # 🚨 skip if no taxa
+  if (ntaxa(ps_g) == 0) next
+
+  # 🚨 skip if no tree
+  if (is.null(phy_tree(ps_g, errorIfNULL = FALSE))) next
+
+  tree <- phy_tree(ps_g)
+
+  # sometimes pruning breaks tree validity
+  if (is.null(tree)) next
+
+  tree_plot <- ggtree(tree)
+  tree_plot <- revts(tree_plot)
+
+  tree_df <- psmelt(ps_g) %>%
+    select(OTU, Region) %>%
+    filter(!is.na(Region)) %>%
+    distinct()
+
+  tree_df$name <- TAXtab[match(tree_df$OTU, TAXtab$ASVname), "name"]
+  tree_df$label_name <- ifelse(!duplicated(tree_df$name), tree_df$name, NA)
+
+  p <- tree_plot %<+% tree_df +
+    
+    geom_tippoint(aes(color = Region),
+                  alpha = 0.6,
+                  size = 2) +
+    
+    geom_tiplab(
+      aes(label = label_name),
+      align = FALSE,
+      linetype = NULL,
+      size = 3,
+      offset = 0.002,
+      hjust = 0,
+      na.rm = TRUE
+    ) +
+    
+    scale_color_manual(values = east_west_colors) +
+    
+    ggtitle(g) +
+    
+    theme_tree2() +
+    
+    theme(
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+      legend.position = "none"
+    ) +
+    
+    expand_limits(x = max(tree_plot$data$x) + 0.02)
+
+  plot_list[[g]] <- p
+}
+
+wrap_plots(plot_list, ncol = 3)
 ```
 
 ASV phylo signal 
@@ -497,7 +583,7 @@ dist decay by gen
 ### -----------------------------
 ### 1. Filter genera (from your top 20)
 ### -----------------------------
-tax <- as.data.frame(tax_table(ps_top20))
+tax <- as.data.frame(tax_table(ps_top10))
 region_map <- setNames(meta$Region, meta$labtracking)
 
 top_genera <- unique(tax$Genus)
@@ -800,6 +886,32 @@ plot_df1 <- plot_df1 %>%
       select(family, majority_label_ob_aer = majority_label, verdict_ob_aer, pct_true_ob_aer = pct_true),
     by = c("Family" = "family")
   )
+
+### ---------------------------
+### 9. Filter for sporulation
+### ---------------------------
+
+df_sporulation <- df_func %>%
+  filter(name == "sporulation") %>%
+  filter(family %in% df$Family) %>%
+  mutate(
+    verdict_df_sporulation = case_when(
+      grepl("^true", majority_label, ignore.case = TRUE) ~ "true",
+      grepl("^false", majority_label, ignore.case = TRUE) ~ "false",
+      grepl("No robust majority", majority_label, ignore.case = TRUE) ~ "no_robust_majority"
+    )
+  )
+
+### ---------------------------
+### 8. Merge ecology + sporulation
+### ---------------------------
+
+plot_df1 <- plot_df1 %>%
+  left_join(
+    df_sporulation %>% 
+      select(family, majority_label_verdict_df_sporulation = majority_label, verdict_df_sporulation, pct_true_verdict_df_sporulation = pct_true),
+    by = c("Family" = "family")
+  )
 ```
 
 circle plot
@@ -811,12 +923,12 @@ tree <- phy_tree(ps3)
 
 tax_df <- data.frame(
   ASV = taxa_names(ps3),
-  Genus = as.character(tax_table(ps3)[, "Family"]),
+  Family = as.character(tax_table(ps3)[, "Family"]),
   stringsAsFactors = FALSE
 ) %>%
   mutate(
-    Genus = trimws(Genus),
-    Genus = ifelse(is.na(Genus) | Genus == "", "Unknown", Genus)
+    Family = trimws(Family),
+    Family = ifelse(is.na(Family) | Family == "", "Unknown", Family)
   )
 
 # =========================
@@ -833,7 +945,8 @@ ring_df <- plot_df1 %>%
     east = log1p(cap(east)),
     west = log1p(cap(west)),
     gene_count = cap(gene_count),
-    obligate_anaerobic = majority_label_ob_ana
+    obligate_anaerobic = majority_label_ob_ana,
+    sporulation = verdict_df_sporulation
   ) %>%
   filter(ASV %in% tree$tip.label) %>%
   mutate(
@@ -860,11 +973,12 @@ p <- ggtree(
 # =========================
 # ring index system
 ring_positions <- c(
-  east = 1,
-  west = 2,
-  region = 3,
-  gene = 4,
-  anaerobic = 5
+  #east = 1,
+  #west = 2,
+  region = 1,
+  gene = 2,
+  anaerobic = 3,
+  sporulation = 4
 )
 
 w <- 0.20
@@ -944,25 +1058,38 @@ p <- p + new_scale_fill() +
     name = "Oxygen preference"
   )
 
+# sporulation
+p <- p + new_scale_fill() +
+  geom_fruit(
+    data = ring_df,
+    geom = geom_tile,
+    aes(y = ASV, x = ring_positions["sporulation"] * w + 1, fill = sporulation),
+    width = w 
+  ) +
+  scale_fill_viridis_d(
+    na.value = "lightgray",
+    name = "sporulation"
+  )
+
 # =========================
 # 6. GENUS LABELS (PUBLICATION STYLE)
 # =========================
 
 genus_nodes <- tax_df %>% 
-  filter(Genus != "Unknown") %>% 
-  group_by(Genus) %>% 
+  filter(Family != "Unknown") %>% 
+  group_by(Family) %>% 
   filter(n() > 1) %>% 
   summarise(node = getMRCA(tree, ASV), .groups = "drop") %>%
   filter(!is.na(node)) 
 
-label_offset <- 1 + 5*0.01
+label_offset <- 1 + 5*0.02
 
 for(i in seq_len(nrow(genus_nodes))){
   
   p <- p +
     geom_cladelab(
       node = genus_nodes$node[i],
-      label = genus_nodes$Genus[i],
+      label = genus_nodes$Family[i],
       
       offset = label_offset,     #  push OUTSIDE rings
       offset.text = 0.01,
@@ -971,7 +1098,7 @@ for(i in seq_len(nrow(genus_nodes))){
       linetype = 1,
       barsize = 0.3,
       
-      fontsize = 2,            # slightly larger
+      fontsize = 3,            # slightly larger
       fontface = "italic",
       angle = "auto"
     )
@@ -1048,6 +1175,7 @@ print(phylum_summary)
 
 % shared ASV
 ```{r}
+library(ggpubr)
 #easiset with binary data
 ps.pa <- transform_sample_counts(ps, function(x) ifelse(x > 0, 1, 0))
 otu <- as(otu_table(ps.pa), "matrix")
@@ -1087,37 +1215,44 @@ shared_df <- shared_df %>%
     )
   )
 
-# duplicate data for "all" category
-all_df <- shared_df %>%
-  dplyr::mutate(Comparison = "all")
-
-# combine
-plot_df <- dplyr::bind_rows(shared_df, all_df)
-
 summary <- shared_df %>%
   group_by(Comparison) %>%
   summarise(mean_percent = mean(PercentShared), .groups = "drop")
 
 print(summary)
 
+comparisons <- list(
+  c("within east", "within west"),
+  c("within east", "between regions (east vs west)"),
+  c("within west", "between regions (east vs west)")
+)
 
-ggplot(plot_df, aes(x = Comparison, y = PercentShared, fill = Comparison)) +
+ggplot(shared_df, aes(x = Comparison, y = PercentShared, fill = Comparison)) +
   geom_violin(trim = FALSE) +
   geom_jitter(aes(color = Comparison),
               width = 0.15, size = 1, shape = 21, color = "black") +
+  #stat_compare_means(
+    #comparisons = comparisons,
+    #method = "wilcox.test",
+    #label = "p.signif"
+  #) +
+  stat_compare_means(
+  method = "wilcox.test",
+  label.y = max(plot_df$PercentShared) * 1.1,
+  paired = T
+)+
+
   theme_bw() +
   labs(
     x = NULL,
     y = "Percent shared ASVs"
   ) +
   scale_fill_manual(values = c(
-    "all" = "#762a83",
     "within east" = "#5ab4ac",
     "within west" = "#d8b365",
     "between regions (east vs west)" = "#D85F64"
   )) +
   scale_color_manual(values = c(
-    "all" = "#762a83",
     "within east" = "#5ab4ac",
     "within west" = "#d8b365",
     "between regions (east vs west)" = "#D85F64"
@@ -1492,6 +1627,254 @@ summary(model)
 
 ```
 
+mantel tests
+```{r}
+# =========================
+# 1. Region map + groups
+# =========================
+region_map <- setNames(meta$Region, meta$labtracking)
+
+east_samples <- names(region_map[region_map == "east"])
+west_samples <- names(region_map[region_map == "west"])
+
+# =========================
+# 2. Mantel function
+# =========================
+run_mantel <- function(dist1, dist2) {
+  vegan::mantel(dist1, dist2, permutations = 9999, method = "spearman")
+}
+
+# =========================
+# 3. EAST
+# =========================
+mantel_bc_east <- run_mantel(
+  as.dist(as.matrix(ps_bc_dist)[east_samples, east_samples]),
+  as.dist(as.matrix(geo_dist)[east_samples, east_samples])
+)
+
+mantel_sor_east <- run_mantel(
+  as.dist(as.matrix(ps_sor_dist)[east_samples, east_samples]),
+  as.dist(as.matrix(geo_dist)[east_samples, east_samples])
+)
+
+# =========================
+# 4. WEST
+# =========================
+mantel_bc_west <- run_mantel(
+  as.dist(as.matrix(ps_bc_dist)[west_samples, west_samples]),
+  as.dist(as.matrix(geo_dist)[west_samples, west_samples])
+)
+
+mantel_sor_west <- run_mantel(
+  as.dist(as.matrix(ps_sor_dist)[west_samples, west_samples]),
+  as.dist(as.matrix(geo_dist)[west_samples, west_samples])
+)
+
+# =========================
+# 5. BETWEEN REGIONS 
+# =========================
+
+bc_mat  <- as.matrix(ps_bc_dist)
+sor_mat <- as.matrix(ps_sor_dist)
+geo_mat <- as.matrix(geo_dist)
+
+samples <- rownames(bc_mat)
+
+pairs <- expand.grid(samples, samples)
+
+region1 <- region_map[pairs$Var1]
+region2 <- region_map[pairs$Var2]
+
+keep <- region1 != region2   # EAST vs WEST only
+
+bc_vals <- bc_mat[cbind(pairs$Var1, pairs$Var2)][keep]
+sor_vals <- sor_mat[cbind(pairs$Var1, pairs$Var2)][keep]
+geo_vals <- geo_mat[cbind(pairs$Var1, pairs$Var2)][keep]
+
+between_bc <- cor.test(
+  geo_vals,
+  bc_vals,
+  method = "spearman"
+)
+
+between_sor <- cor.test(
+  geo_vals,
+  sor_vals,
+  method = "spearman"
+)
+
+# =========================
+# 6. RESULTS TABLE
+# =========================
+results <- data.frame(
+  group = c("east", "west", "between"),
+  
+  bc_stat = c(
+    mantel_bc_east$statistic,
+    mantel_bc_west$statistic,
+    between_bc$estimate
+  ),
+  
+  bc_p = c(
+    mantel_bc_east$signif,
+    mantel_bc_west$signif,
+    between_bc$p.value
+  ),
+  
+  sor_stat = c(
+    mantel_sor_east$statistic,
+    mantel_sor_west$statistic,
+    between_sor$estimate
+  ),
+  
+  sor_p = c(
+    mantel_sor_east$signif,
+    mantel_sor_west$signif,
+    between_sor$p.value
+  )
+)
+
+results
+```
+
+physical distance matrix using GPS
+```{r}
+gps <- as.data.frame(mpse_samples_filtered@colData)[, c("labtracking","stateProvince","decimalLatitude","decimalLongitude","Region")]
+
+locations <- unique(gps$stateProvince)
+
+####################
+# Physical distance#
+####################
+sf_points <- st_as_sf(
+  gps,
+  coords = c("decimalLongitude", "decimalLatitude"),
+  crs = 4326  # WGS84
+)
+
+dist_matrix <- st_distance(sf_points)
+
+# Set row/column names
+rownames(dist_matrix) <- gps$labtracking
+colnames(dist_matrix) <- gps$labtracking
+
+dist_object <- as.dist(dist_matrix)
+
+# Perform hierarchical clustering 
+hc_tree <- hclust(dist_object, method = "complete") 
+hc_phylo <- as.phylo(hc_tree)
+
+# Create the expanded tree
+expanded_tree <- hc_phylo
+for(stateProvince in hc_phylo$tip.label) {
+  # Find all samples for this stateProvince
+  samples <- gps$labtracking[gps$stateProvince == stateProvince]
+  
+  if(length(samples) > 0) {
+    # Find the tip position for this stateProvince
+    tip_position <- which(expanded_tree$tip.label == stateProvince)
+    
+    if(length(samples) == 1) {
+      # If only one sample, just rename the tip
+      expanded_tree$tip.label[tip_position] <- samples[1]
+    } else {
+      # If multiple samples, we need to add them as a polytomy
+      # First, rename the original tip to the first sample
+      expanded_tree$tip.label[tip_position] <- samples[1]
+      
+      # Then add the rest as sister tips (with very small branch length)
+      for(i in 2:length(samples)) {
+        expanded_tree <- phytools::bind.tip(expanded_tree, 
+                                            tip.label = samples[i],
+                                            where = tip_position,
+                                            position = 0.0001)  # tiny branch length
+      }
+    }
+  }
+}
+
+plot(expanded_tree)
+
+# Match tip labels to rows in gps
+tip_index <- match(expanded_tree$tip.label, gps$labtracking)
+
+# Get habitats for all tips (NA if no match)
+tip_habitats <- as.character(gps$Region[tip_index])
+
+# Look up colors in habitat_colors
+tip_colors <- east_west_colors[tip_habitats]
+
+# Replace any missing colors with black
+tip_colors[is.na(tip_colors)] <- "black"
+
+#build tip color vector from your state/colors (must be same length as nrow(assoc))
+gps$tip_colors <- east_west_colors[
+  match(gps$land_use, names(east_west_colors))
+]
+names(gps$tip_colors) <- gps$labtracking
+
+phy_tree <- as.phylo(expanded_tree)
+
+# Plot the tree with colored tips
+plot(phy_tree, 
+     tip.color = tip_colors,
+     cex = 0.6,
+     no.margin = TRUE)
+```
+
+mantel test for whole dataset
+```{r}
+####################
+# Physical distance#
+####################
+sor_mat <- as.matrix(mpse_bc_dist)[labs, labs]
+sor_mat <- sor_mat[rownames(dist_object), colnames(dist_object)]
+
+unique(rownames(dist_object) == rownames(sor_mat)) # ok 
+unique(colnames(dist_object) == colnames(sor_mat)) # ok
+
+mt = mantel(sor_mat,dist_object, method = "spearman")
+mt$statistic
+mt$signif
+
+dist_object_no_zero = dist_object
+mt = cultevo::mantel.test(dist(sor_mat),dist(dist_object_no_zero), omitzerodistances = TRUE, trials = 999)
+mt
+
+#### plot the mantel tests 
+# Convert to long data frames for plotting
+df_with_zeros <- data.frame(
+  x = as.vector(dist_object),
+  y = as.vector(mpse_sor_dist)
+)
+
+df_no_zeros <- data.frame(
+  x = as.vector(dist_object_no_zero),
+  y = as.vector(mpse_sor_dist)
+)
+df_no_zeros <- df_no_zeros[df_no_zeros$x > 0,]
+
+# Plot with zeros
+p1 <- ggplot(df_with_zeros, aes(x = x, y = y)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", col = "blue") +
+  labs(
+    x = "physical distance",
+    y = "Microbiome distance")+
+  theme_minimal()
+
+# Plot without zeros
+p2 <- ggplot(df_no_zeros, aes(x = x, y = y)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", col = "#8c510a") +
+  labs(
+    x = "Geograohic distance",
+    y = "Microbiome distance"
+  ) +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+```
 
 vignette used for code chunks below: https://bioconductor.org/packages/release/bioc/vignettes/MicrobiotaProcess/inst/doc//MicrobiotaProcess.html
 
@@ -1649,148 +2032,81 @@ p1
 p2
 ```
 
-below this is whole microbiome community
-___________________________________________________________________________
-physical distance matrix using GPS
+sor pcoa
 ```{r}
-gps <- as.data.frame(mpse_samples_filtered@colData)[, c("labtracking","stateProvince","decimalLatitude","decimalLongitude","Region")]
+mpse_samples_filtered %<>% 
+  mp_cal_pcoa(.abundance = hellinger, distmethod = "jaccard")
 
-locations <- unique(gps$stateProvince)
+# perform adonis or anosim to check whether it is significant to the dissimilarities of groups
+mpse_samples_filtered %<>%
+  mp_adonis(
+    .abundance = hellinger,
+    .formula = ~Region,
+    distmethod = "jaccard",
+    permutations = 9999,
+    action = "add"
+  )
 
-####################
-# Physical distance#
-####################
-sf_points <- st_as_sf(
-  gps,
-  coords = c("decimalLongitude", "decimalLatitude"),
-  crs = 4326  # WGS84
-)
+mpse_samples_filtered$Region <- 
+  factor(
+    mpse_samples_filtered$Region,
+    levels = c("east", "west")
+  )
 
-dist_matrix <- st_distance(sf_points)
+mpse_samples_filtered %>% mp_extract_internal_attr(name = adonis)
 
-# Set row/column names
-rownames(dist_matrix) <- gps$labtracking
-colnames(dist_matrix) <- gps$labtracking
-
-dist_object <- as.dist(dist_matrix)
-
-# Perform hierarchical clustering 
-hc_tree <- hclust(dist_object, method = "complete") 
-hc_phylo <- as.phylo(hc_tree)
-
-# Create the expanded tree
-expanded_tree <- hc_phylo
-for(stateProvince in hc_phylo$tip.label) {
-  # Find all samples for this stateProvince
-  samples <- gps$labtracking[gps$stateProvince == stateProvince]
-  
-  if(length(samples) > 0) {
-    # Find the tip position for this stateProvince
-    tip_position <- which(expanded_tree$tip.label == stateProvince)
-    
-    if(length(samples) == 1) {
-      # If only one sample, just rename the tip
-      expanded_tree$tip.label[tip_position] <- samples[1]
-    } else {
-      # If multiple samples, we need to add them as a polytomy
-      # First, rename the original tip to the first sample
-      expanded_tree$tip.label[tip_position] <- samples[1]
-      
-      # Then add the rest as sister tips (with very small branch length)
-      for(i in 2:length(samples)) {
-        expanded_tree <- phytools::bind.tip(expanded_tree, 
-                                            tip.label = samples[i],
-                                            where = tip_position,
-                                            position = 0.0001)  # tiny branch length
-      }
-    }
-  }
-}
-
-plot(expanded_tree)
-
-# Match tip labels to rows in gps
-tip_index <- match(expanded_tree$tip.label, gps$labtracking)
-
-# Get habitats for all tips (NA if no match)
-tip_habitats <- as.character(gps$Region[tip_index])
-
-# Look up colors in habitat_colors
-tip_colors <- east_west_colors[tip_habitats]
-
-# Replace any missing colors with black
-tip_colors[is.na(tip_colors)] <- "black"
-
-#build tip color vector from your state/colors (must be same length as nrow(assoc))
-gps$tip_colors <- east_west_colors[
-  match(gps$land_use, names(east_west_colors))
-]
-names(gps$tip_colors) <- gps$labtracking
-
-phy_tree <- as.phylo(expanded_tree)
-
-# Plot the tree with colored tips
-plot(phy_tree, 
-     tip.color = tip_colors,
-     cex = 0.6,
-     no.margin = TRUE)
-
-
-```
-
-mantel test
-DB need to readjust the distance decay to include the east west divide not just distance
-```{r}
-####################
-# Physical distance#
-####################
-sor_mat <- as.matrix(mpse_sor_dist)[labs, labs]
-sor_mat <- sor_mat[rownames(dist_object), colnames(dist_object)]
-
-unique(rownames(dist_object) == rownames(sor_mat)) # ok 
-unique(colnames(dist_object) == colnames(sor_mat)) # ok
-
-mt = mantel(sor_mat,dist_object, method = "spearman")
-mt$statistic
-mt$signif
-
-dist_object_no_zero = dist_object
-mt = cultevo::mantel.test(dist(sor_mat),dist(dist_object_no_zero), omitzerodistances = TRUE, trials = 999)
-mt
-
-#### plot the mantel tests 
-# Convert to long data frames for plotting
-df_with_zeros <- data.frame(
-  x = as.vector(dist_object),
-  y = as.vector(mpse_sor_dist)
-)
-
-df_no_zeros <- data.frame(
-  x = as.vector(dist_object_no_zero),
-  y = as.vector(mpse_sor_dist)
-)
-df_no_zeros <- df_no_zeros[df_no_zeros$x > 0,]
-
-# Plot with zeros
-p1 <- ggplot(df_with_zeros, aes(x = x, y = y)) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", col = "blue") +
-  labs(
-    x = "physical distance",
-    y = "Microbiome distance")+
-  theme_minimal()
-
-# Plot without zeros
-p2 <- ggplot(df_no_zeros, aes(x = x, y = y)) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", col = "#8c510a") +
-  labs(
-    x = "Geograohic distance",
-    y = "Microbiome distance"
+p1 <- mpse_samples_filtered %>%
+  mp_plot_ord(
+    .ord = pcoa, 
+    .group = Region, 
+    .color = Region, 
+    .starshape = Region,
+    .size = 3,
+    .alpha = 1,
+    ellipse = TRUE,
+    show.legend = FALSE
   ) +
-  theme_minimal()
+  scale_color_manual(
+    name = "Region",
+    values = east_west_colors
+  ) +
+  scale_fill_manual(
+    name = "Region",
+    values = east_west_colors
+  )
 
-grid.arrange(p1, p2, ncol = 2)
+p1
+
+p2 <- mpse_samples_filtered %>% 
+  mp_plot_ord(
+    .ord = pcoa, 
+    .group = Region, 
+    .color = Region, 
+    .size = Observe, 
+    .alpha = Shannon,
+    .starshape = Region,
+    ellipse = TRUE,
+    show.legend = FALSE
+  ) +
+  scale_color_manual(
+    name = "Region",
+    values = east_west_colors
+  ) +
+  scale_fill_manual(
+    name = "Region",
+    values = east_west_colors
+  ) +
+  scale_size_continuous(
+    range = c(0.5, 3),
+    guide = guide_legend(
+      keywidth = 0.6,
+      keyheight = 0.6,
+      label.theme = element_text(size = 6.5)
+    )
+  )
+
+p1
+p2
 ```
 
 #### Plot the tanglegram with the expanded tree --------------------------------
