@@ -97,6 +97,23 @@ east_west_colors <- c(
   "west" = "#d8b365"   # muted warm tan
 )
 
+state_colors <- c(
+  # WEST (warm tones)
+  "California"     = "#FF00FF",  # electric magenta (highly distinct)
+  "Washington"     = "#D55E00",
+  "Kansas"         = "#F39B7F",
+  "North Dakota"   = "#C44E52",
+  "Utah"           = "#F28E2B",
+  "Colorado"       = "#FF9DA7",
+  "Oklahoma"       = "#B5651D",
+  "Wyoming"        = "#E17C05",
+
+  # EAST (cool tones)
+  "New Hampshire"  = "#4DBBD5",
+  "Wisconsin"      = "#3C5488",
+  "Virginia"       = "#00A087",
+  "Tennessee"      = "#8491B4"
+)
 ```
 
 MicrobiotaProcess import
@@ -129,11 +146,8 @@ mpse_sor_dist  <- vegdist(t(mpse_asv_table), method = "bray", binary = TRUE)
 labs <- attr(mpse_bc_dist, "Labels")
 ```
 
-phyloseq import 
+phyloseq import
 ```{r}
-#---------------------------
-# Import data
-#---------------------------
 physeq <- qza_to_phyloseq(
   features  = "data/microbiome/rarefied-table.qza",
   tree      = "data/microbiome/rooted-tree.qza",
@@ -150,30 +164,19 @@ ps <- physeq %>%
 
 sample_names(ps) <- sample_data(ps)$labtracking
 
-ps_otu <- otu_table(ps)
-sort(rowSums(t(ps_otu)))
-
-write.table(
-  as.data.frame(ps_otu),
-  file = "ps_otu.tsv",
-  sep = "\t",
-  row.names = TRUE,  # This will include row names in the first column
-  col.names = NA,    # This adds a blank header for the row names column
-  quote = FALSE      # Recommended to avoid issues with quotes in your data
-)
-
-ps_bc_dist   <- vegdist(t(ps_otu), method = "bray") 
-ps_sor_dist  <- vegdist(t(ps_otu), method = "bray", binary = TRUE)
-
 meta <- data.frame(sample_data(ps))
-meta$decimalLatitude <- as.numeric(meta$decimalLatitude)
+
+meta$decimalLatitude  <- as.numeric(meta$decimalLatitude)
 meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
 
-permanova <- adonis2(t(ps_otu) ~ Region,
-               data = meta, permutations=99, method = "bray")
-
-# P-value
-print(as.data.frame(permanova$aov.tab)["group", "Pr(>F)"])
+# optional export
+write.table(
+  meta,
+  file = "meta.tsv",
+  sep = "\t",
+  row.names = FALSE,
+  quote = FALSE
+)
 ```
 
 geographic distance
@@ -217,7 +220,12 @@ results_ancom_bc = data.frame(ASV = out$res$lfc$taxon,
                               Diff_ab =  out$res$diff_abn$Regionwest)
 results_ancom_bc$lcf = results_ancom_bc$lcf * -1
 
-results_ancom_bc$association = ifelse(results_ancom_bc$q_value < 0.05 & results_ancom_bc$lcf > 0, "east", "Not singificant")
+results_ancom_bc$association = ifelse(
+  results_ancom_bc$q_value < 0.05 & results_ancom_bc$lcf > 0,
+  "east",
+  "Not Significant"
+)
+
 results_ancom_bc$association = ifelse(results_ancom_bc$q_value < 0.05 & results_ancom_bc$lcf < 0, "west",results_ancom_bc$association)
 
 TAXtab =as.data.frame(tax_table(ps2))
@@ -238,7 +246,6 @@ TAXtab$name[1:10] # ok it looks good.
 results_ancom_bc$ASVname = TAXtab$ASVname[match(results_ancom_bc$ASV ,rownames(TAXtab))]
 
 results_ancom_bc$Genus = TAXtab$Genus[match(results_ancom_bc$ASV ,rownames(TAXtab))]
-
 results_sig = results_ancom_bc[results_ancom_bc$q_value < 0.05,]
 table(results_sig$Diff_ab)
 table(results_sig$ASVname,results_sig$Diff_ab, results_sig$Genus)
@@ -249,10 +256,53 @@ results_sig = results_sig[order(results_sig$sum_abundance, decreasing = TRUE),]
 results_sig = results_sig[1:14,]
 results_sig$ASVname = factor(results_sig$ASVname, levels = rev(results_sig$ASVname))
 
+
+# Extract OTU table
+otu_mat <- as.data.frame(otu_table(ps2))
+
+# Make sure taxa are rows
+if (!taxa_are_rows(ps2)) {
+  otu_mat <- t(otu_mat)
+}
+
+otu_mat <- as.data.frame(otu_mat)
+
+# Sample metadata
+meta <- as.data.frame(sample_data(ps2))
+
+# Add stateProvince
+meta$SampleID <- rownames(meta)
+
+# Convert OTU matrix to long format
+otu_long <- otu_mat %>%
+  tibble::rownames_to_column("ASV") %>%
+  tidyr::pivot_longer(
+    cols = -ASV,
+    names_to = "SampleID",
+    values_to = "Abundance"
+  ) %>%
+  left_join(meta[, c("SampleID", "stateProvince")],
+            by = "SampleID")
+
+# Get dominant state for each ASV
+asv_state <- otu_long %>%
+  group_by(ASV, stateProvince) %>%
+  summarise(total_abundance = sum(Abundance), .groups = "drop") %>%
+  group_by(ASV) %>%
+  slice_max(total_abundance, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+# Merge into ANCOMBC results
+results_ancom_bc <- left_join(
+  results_ancom_bc,
+  asv_state[, c("ASV", "stateProvince")],
+  by = "ASV"
+)
+
 ggplot(results_ancom_bc,
        aes(x = as.numeric(lcf),
            y = -log10(as.numeric(q_value)),
-           color = association)) +
+           color = stateProvince)) +
   
   geom_point(size = 3, alpha = 0.9) +
   
@@ -273,17 +323,11 @@ ggplot(results_ancom_bc,
              color = "gray50",
              linewidth = 0.8) +
   
-  scale_color_manual(values = c(
-    "east" = "#5ab4ac",
-    "Not Significant" = "gray70",
-    "west" = "#d8b365"
-  )) +
-  
   labs(
     x = "Log2 Fold Change",
     y = expression(-log[10](q-value)),
     title = "Differentially Abundant Taxa",
-    color = "Association"
+    color = "State"
   ) +
   
   theme_bw(base_size = 18) +
@@ -329,7 +373,7 @@ taxa_names(ps2) <- TAXtab$ASVname
 
 
 # Select genus of interest
-g <- "Roseburia"
+g <- "Lactobacillus"
 
 # Subset phyloseq object for that genus
 ps_g <- subset_taxa(ps2, Genus == g)
@@ -343,8 +387,8 @@ plotTree(phy_tree(ps_g),fsize=0.8,ftype="i",
 
 # Extract OTU and Region information
 tree_df <- psmelt(ps_g) %>%
-  dplyr::select(OTU, Region,Abundance) %>%
-  filter(!is.na(Region)) %>%
+  dplyr::select(OTU, stateProvince,Abundance) %>%
+  filter(!is.na(stateProvince)) %>%
   distinct()
 
 # Add taxonomy name
@@ -371,7 +415,7 @@ clade_labels <- tip_positions %>%
 tree_plot_flipped <- revts(tree_plot)
 
 tree_plot %<+% tree_df +
-  geom_tippoint(aes(color = Region),
+  geom_tippoint(aes(color = stateProvince),
                 alpha = 0.5,
                 size = 2.5) +
 
@@ -385,7 +429,7 @@ tree_plot %<+% tree_df +
     na.rm = TRUE
   ) +
 
-  scale_color_manual(values = east_west_colors) +
+  #scale_color_manual(values = east_west_colors) +
 
   ggtitle(g) +
 
@@ -401,6 +445,7 @@ tree_plot %<+% tree_df +
   expand_limits(x = max(tree_plot$data$x) + 0.02)
 ```
 
+ASV by genus trees loop and multipannel
 ```{r}
 genus_list <- unique(tax_table(ps_top10)[, "Genus"])
 genus_list <- genus_list[!is.na(genus_list)]
@@ -1184,6 +1229,37 @@ if (taxa_are_rows(ps.pa)) {
   otu <- t(otu)
 }
 
+# Number of ASVs (richness) per sample
+asv_richness <- sample_sums(ps.pa)
+
+# Range across all samples
+range_asvs <- range(asv_richness)
+
+cat("ASV richness range across samples:\n")
+cat("Min:", range_asvs[1], "\n")
+cat("Max:", range_asvs[2], "\n\n")
+
+# Build dataframe with richness + metadata
+richness_df <- data.frame(
+  SampleID = sample_names(ps.pa),
+  ASV_Richness = asv_richness,
+  sample_data(ps.pa)
+)
+
+# Median and SD by region
+region_summary <- richness_df %>%
+  group_by(Region) %>%   # change 'region' if your metadata column has a different name
+  summarise(
+    n_samples = n(),
+    median_ASV_richness = median(ASV_Richness),
+    mean_ASV_richness = mean(ASV_Richness),
+    sd_ASV_richness = sd(ASV_Richness),
+    min_ASV_richness = min(ASV_Richness),
+    max_ASV_richness = max(ASV_Richness)
+  )
+
+print(region_summary)
+
 bray <- vegdist(otu, method = "bray", binary = TRUE)
 bray_sim <- 1 - as.matrix(bray)
 
@@ -1221,6 +1297,12 @@ summary <- shared_df %>%
 
 print(summary)
 
+sd <- shared_df %>%
+  group_by(Comparison) %>%
+  summarise(mean_percent = sd(PercentShared), .groups = "drop")
+
+print(sd)
+
 comparisons <- list(
   c("within east", "within west"),
   c("within east", "between regions (east vs west)"),
@@ -1231,15 +1313,11 @@ ggplot(shared_df, aes(x = Comparison, y = PercentShared, fill = Comparison)) +
   geom_violin(trim = FALSE) +
   geom_jitter(aes(color = Comparison),
               width = 0.15, size = 1, shape = 21, color = "black") +
-  #stat_compare_means(
-    #comparisons = comparisons,
-    #method = "wilcox.test",
-    #label = "p.signif"
-  #) +
-  stat_compare_means(
+stat_compare_means(
+  comparisons = comparisons,
   method = "wilcox.test",
-  label.y = max(plot_df$PercentShared) * 1.1,
-  paired = T
+  method.args = list(alternative = "two.sided"),
+  label = "p.format"
 )+
 
   theme_bw() +
@@ -1393,16 +1471,24 @@ meta$Axis02<-bac.nmds$points[,2]
 
 # install.packages("viridis") if needed
 bac_nmds <- ggplot(meta, aes(x = Axis01, y = Axis02)) +
-  geom_point(aes(color = Region, shape = Region), size = 2, alpha = 0.8) +
+  geom_point(aes(color = Region), size = 2, alpha = 0.8) +
   stat_ellipse(aes(fill = Region), geom = "polygon", alpha = 0.45, level = 0.68, show.legend = FALSE) +
   scale_color_manual(values = east_west_colors) +
   scale_fill_manual(values = east_west_colors) +
   theme_classic() +
-  labs(x = "NMDS1", y = "NMDS2", shape = "Region") +
+  labs(x = "NMDS1", y = "NMDS2") +
   ggtitle("Sørensen dissimilarity")
 bac_nmds
 
+bac_nmds <- bac_nmds +
+  geom_point(
+    data = subset(meta, stateProvince == "California"),
+    inherit.aes = TRUE,
+    size = 4,
+    color = "#FF00FF"  # standout magenta
+  )
 
+bac_nmds
 ```
 
 Bayesian Generalized (Non-)Linear Multivariate Multilevel Models
@@ -1417,7 +1503,7 @@ Bayesian Generalized (Non-)Linear Multivariate Multilevel Models
 ### =========================
 
 melted_BC <- melt(
-  as.matrix(ps_bc_dist),
+  as.matrix(ps_sor_dist),
   varnames = c("Sample1", "Sample2"),
   value.name = "BC_Dissimilarity"
 )
@@ -1583,27 +1669,6 @@ summary(model)
 #priors regularize weakly identified slopes
 #distance is still biologically meaningful
 
-#model <- brm(
-#  BC_Similarity ~ 1 + dist_z +
-#    (1 + dist_z || same_region) +
-#    (1 | mm(Sample1, Sample2)),
-#  data = melted_diffs,
-  
-#  prior = c(
-#    prior(normal(0, 1), class = "b"),
-#    prior(normal(0, 1), class = "sd")
-#  ),
-
-#  warmup = 2000, iter = 6000,
-#  chains = 4,
-#  cores = 24,
-#  threads = threading(6),
-#  control = list(
-#    adapt_delta = 0.99,
-#    max_treedepth = 15
-#  )
-#)
-
 #You’ll get:
 #distance–decay slope for within-region pairs
 #distance–decay slope for across-region pairs
@@ -1612,19 +1677,234 @@ summary(model)
 #slopes differ → region-specific decay
 #slopes similar but intercepts differ → Mississippi as a barrier
 #across-region slope = 0 → distance irrelevant once region differs
+```
+
+distance decay of overlapping distances only 
+```{r}
+east_range <- range(
+  melted_diffs$geo_Distance[
+    melted_diffs$compairson == "within east"
+  ],
+  na.rm = TRUE
+)
+
+west_range <- range(
+  melted_diffs$geo_Distance[
+    melted_diffs$compairson == "within west"
+  ],
+  na.rm = TRUE
+)
+
+# distance range of between-region comparisons
+between_range <- range(
+  melted_diffs$geo_Distance[
+    melted_diffs$compairson == "between regions (east vs west)"
+  ],
+  na.rm = TRUE
+)
+
+between_min <- between_range[1]
+between_max <- between_range[2]
+
+### =========================
+### Keep only distances that fall
+### within the BETWEEN-region range
+### =========================
+
+overlap_df <- melted_diffs %>%
+  filter(
+    geo_Distance >= between_min,
+    geo_Distance <= between_max
+  )
 
 
-#model <- brm(sor_Similarity ~ dist_z + same_region + dist_z:same_region + (1 | mm(Sample1, Sample2)),
-#             data = melted_diffs, 
-             #prior = c(prior(normal(0, 1), class = "b"), prior(normal(0, 1), class = "sd")),
+# optional: check overlap range
+overlap_min
+overlap_max
+### =========================
+### Keep ONLY overlapping distances
+### =========================
 
-#             warmup = 2000, iter = 6000,
-#             chains = 4,
-#             cores = 24,
-#             threads = threading(6),
-#             control = list(adapt_delta = 0.99,max_treedepth = 15))
+overlap_df <- melted_diffs %>%
+  filter(
+    geo_Distance >= overlap_min,
+    geo_Distance <= overlap_max
+  )
 
+### =========================
+### Plot
+### =========================
 
+p_overlap <- ggplot(
+  overlap_df,
+  aes(x = geo_Distance, y = BC_Similarity)
+) +
+
+  geom_point(
+    aes(color = compairson),
+    size = 2,
+    alpha = 0.5
+  ) +
+  scale_color_manual(values = base_colors, guide = "none") +
+  ggnewscale::new_scale_color() +
+
+  geom_smooth(
+    aes(color = compairson),
+    method = "lm",
+    se = FALSE,
+    linewidth = 1.2
+  ) +
+
+  scale_color_manual(values = line_colors, name = "Comparison") +
+
+  labs(
+    x = "Distance (km)",
+    y = "Sor Similarity"
+  ) +
+
+  theme_bw()
+
+print(p_overlap)
+```
+
+permanovas
+```{r}
+#========================================================
+# ASV-LEVEL
+#========================================================
+ps_asv_otu <- as(otu_table(ps), "matrix")
+
+if (!taxa_are_rows(ps)) {
+  ps_asv_otu <- t(ps_asv_otu)
+}
+
+# Bray-Curtis
+permanova_asv_bray <- adonis2(
+  t(ps_asv_otu) ~ Region + decimalLatitude + decimalLongitude, 
+  data = meta,
+  permutations = 99,
+  method = "bray"
+)
+
+# Sørensen (binary Bray-Curtis)
+permanova_asv_sor <- adonis2(
+  t(ps_asv_otu) ~ Region + decimalLatitude + decimalLongitude,
+  data = meta,
+  permutations = 99,
+  method = "bray",
+  binary = TRUE
+)
+
+permanova_asv_bray
+permanova_asv_sor
+
+#========================================================
+# GENUS-LEVEL
+#========================================================
+ps_genus <- tax_glom(ps, taxrank = "Genus")
+
+# remove missing genera
+ps_genus <- subset_taxa(ps_genus, !is.na(Genus))
+
+genus_otu <- as(otu_table(ps_genus), "matrix")
+
+if (!taxa_are_rows(ps_genus)) {
+  genus_otu <- t(genus_otu)
+}
+
+# Bray-Curtis
+permanova_genus_bray <- adonis2(
+  t(genus_otu) ~ Region  + decimalLatitude + decimalLongitude,
+  data = meta,
+  permutations = 99,
+  method = "bray"
+)
+
+# Sørensen
+permanova_genus_sor <- adonis2(
+  t(genus_otu) ~ Region  + decimalLatitude + decimalLongitude,
+  data = meta,
+  permutations = 99,
+  method = "bray",
+  binary = TRUE
+)
+
+permanova_genus_bray
+permanova_genus_sor
+
+#========================================================
+# SPECIES-LEVEL
+#========================================================
+ps_species <- tax_glom(ps, taxrank = "Species")
+
+# remove missing species labels
+ps_species <- subset_taxa(ps_species, !is.na(Species))
+
+species_otu <- as(otu_table(ps_species), "matrix")
+
+if (!taxa_are_rows(ps_species)) {
+  species_otu <- t(species_otu)
+}
+
+# Bray-Curtis
+permanova_species_bray <- adonis2(
+  t(species_otu) ~ Region  + decimalLatitude + decimalLongitude,
+  data = meta,
+  permutations = 99,
+  method = "bray"
+)
+
+# Sørensen
+permanova_species_sor <- adonis2(
+  t(species_otu) ~ Region  + decimalLatitude + decimalLongitude,
+  data = meta,
+  permutations = 99,
+  method = "bray",
+  binary = TRUE
+)
+
+permanova_species_bray
+permanova_species_sor
+
+#========================================================
+# Combine PERMANOVA results into one table
+#========================================================
+
+extract_permanova <- function(model, level, metric) {
+  
+  out <- as.data.frame(model)
+  
+  data.frame(
+    Level      = level,
+    Metric     = metric,
+    R2         = out$R2[1],
+    F          = out$F[1],
+    P_value    = out$`Pr(>F)`[1]
+  )
+}
+
+permanova_results <- bind_rows(
+  
+  extract_permanova(permanova_asv_bray,     "ASV",     "Bray-Curtis"),
+  extract_permanova(permanova_asv_sor,      "ASV",     "Sorensen"),
+  
+  extract_permanova(permanova_species_bray, "Species", "Bray-Curtis"),
+  extract_permanova(permanova_species_sor,  "Species", "Sorensen"),
+  
+  extract_permanova(permanova_genus_bray,   "Genus",   "Bray-Curtis"),
+  extract_permanova(permanova_genus_sor,    "Genus",   "Sorensen")
+  
+)
+
+# round values for cleaner display
+permanova_results <- permanova_results %>%
+  mutate(
+    R2      = round(R2, 4),
+    F       = round(F, 4),
+    P_value = signif(P_value, 3)
+  )
+
+print(permanova_results)
 ```
 
 mantel tests
@@ -1691,17 +1971,9 @@ bc_vals <- bc_mat[cbind(pairs$Var1, pairs$Var2)][keep]
 sor_vals <- sor_mat[cbind(pairs$Var1, pairs$Var2)][keep]
 geo_vals <- geo_mat[cbind(pairs$Var1, pairs$Var2)][keep]
 
-between_bc <- cor.test(
-  geo_vals,
-  bc_vals,
-  method = "spearman"
-)
+between_bc<-mantel(as.dist(bc_vals), as.dist(geo_vals),method = "spearman", permutations = 999, parallel = getOption("mc.cores"))
 
-between_sor <- cor.test(
-  geo_vals,
-  sor_vals,
-  method = "spearman"
-)
+between_sor<-mantel(as.dist(sor_vals), as.dist(geo_vals),method = "spearman", permutations = 999, parallel = getOption("mc.cores"))
 
 # =========================
 # 6. RESULTS TABLE
@@ -1712,7 +1984,7 @@ results <- data.frame(
   bc_stat = c(
     mantel_bc_east$statistic,
     mantel_bc_west$statistic,
-    between_bc$estimate
+    between_bc$statistic
   ),
   
   bc_p = c(
@@ -1724,7 +1996,7 @@ results <- data.frame(
   sor_stat = c(
     mantel_sor_east$statistic,
     mantel_sor_west$statistic,
-    between_sor$estimate
+    between_sor$statistic
   ),
   
   sor_p = c(
@@ -1964,7 +2236,7 @@ p3 <- mpse_samples_filtered %>% mp_plot_dist(.distmethod = bray, .group = Region
  p3 
 ```
 
-pcoa
+BC pcoa
 ```{r}
 mpse_samples_filtered %<>% 
     mp_cal_pcoa(.abundance=hellinger, distmethod="bray")
@@ -1986,7 +2258,6 @@ p1 <- mpse_samples_filtered %>%
           .ord = pcoa, 
           .group = Region, 
           .color = Region, 
-          .starshape = Region,
           .size = 3,
           .alpha = 1,
           ellipse = TRUE,
@@ -2003,111 +2274,185 @@ p1 <- mpse_samples_filtered %>%
 
 p1
 
-# The size of point also can be mapped to other variables such as Observe, or Shannon 
-# Then the alpha diversity and beta diversity will be displayed simultaneously.
-p2 <- mpse_samples_filtered %>% 
-        mp_plot_ord(
-          .ord = pcoa, 
-          .group = Region, 
-          .color = Region, 
-          .size = Observe, 
-          .alpha = Shannon,
-          .starshape = Region,
-          ellipse = TRUE,
-          show.legend = FALSE # don't display the legend of stat_ellipse 
-        ) +
-        scale_color_manual(
-    name   = "Region",
-    values = east_west_colors
-  ) +
-  scale_fill_manual(
-    name   = "Region",
-    values = east_west_colors
-  ) +
-        scale_size_continuous(
-          range=c(0.5, 3),
-          guide = guide_legend(keywidth=0.6, keyheight=0.6, label.theme=element_text(size=6.5))
-        )
-p1 
-p2
-```
-
-sor pcoa
-```{r}
-mpse_samples_filtered %<>% 
-  mp_cal_pcoa(.abundance = hellinger, distmethod = "jaccard")
-
-# perform adonis or anosim to check whether it is significant to the dissimilarities of groups
-mpse_samples_filtered %<>%
-  mp_adonis(
-    .abundance = hellinger,
-    .formula = ~Region,
-    distmethod = "jaccard",
-    permutations = 9999,
-    action = "add"
-  )
-
-mpse_samples_filtered$Region <- 
-  factor(
-    mpse_samples_filtered$Region,
-    levels = c("east", "west")
-  )
-
-mpse_samples_filtered %>% mp_extract_internal_attr(name = adonis)
-
-p1 <- mpse_samples_filtered %>%
-  mp_plot_ord(
-    .ord = pcoa, 
-    .group = Region, 
-    .color = Region, 
-    .starshape = Region,
-    .size = 3,
-    .alpha = 1,
-    ellipse = TRUE,
-    show.legend = FALSE
-  ) +
-  scale_color_manual(
-    name = "Region",
-    values = east_west_colors
-  ) +
-  scale_fill_manual(
-    name = "Region",
-    values = east_west_colors
+p1 <- p1 +
+  geom_point(
+    data = ~subset(., stateProvince == "California"),
+    inherit.aes = TRUE,
+    size = 4,
+    color = "#FF00FF"  # standout magenta
   )
 
 p1
+```
 
-p2 <- mpse_samples_filtered %>% 
-  mp_plot_ord(
-    .ord = pcoa, 
-    .group = Region, 
-    .color = Region, 
-    .size = Observe, 
-    .alpha = Shannon,
-    .starshape = Region,
-    ellipse = TRUE,
+SOR pcoa
+```{r}
+library(ggside)
+# -----------------------------
+# Sørensen distance
+# -----------------------------
+
+otu <- as(otu_table(ps), "matrix")
+
+if (taxa_are_rows(ps)) {
+  otu <- t(otu)
+}
+
+# presence/absence
+otu.pa <- ifelse(otu > 0, 1, 0)
+
+# Sørensen dissimilarity
+sor_dist <- vegdist(otu.pa, method = "bray", binary = TRUE)
+
+# -----------------------------
+# PCoA
+# -----------------------------
+
+pcoa_res <- cmdscale(sor_dist, eig = TRUE, k = 2)
+
+# Percent variance explained
+var_exp <- round(
+  100 * pcoa_res$eig / sum(pcoa_res$eig[pcoa_res$eig > 0]),
+  2
+)
+
+# Dataframe
+pcoa_df <- data.frame(
+  SampleID = rownames(pcoa_res$points),
+  PCo1 = pcoa_res$points[,1],
+  PCo2 = pcoa_res$points[,2]
+)
+
+# Metadata
+meta <- data.frame(sample_data(ps))
+meta$SampleID <- rownames(meta)
+
+pcoa_df <- left_join(pcoa_df, meta, by = "SampleID")
+
+# Match ordering
+pcoa_df$Region <- factor(
+  pcoa_df$Region,
+  levels = c("east", "west")
+)
+
+# flip horizontally
+pcoa_df$PCo1 <- -1 * pcoa_df$PCo1
+
+# -----------------------------
+# Plot
+# -----------------------------
+
+p <- ggplot(pcoa_df, aes(PCo1, PCo2, color = Region, fill = Region)) +
+
+  geom_hline(yintercept = 0,
+             linetype = "dashed",
+             color = "grey45",
+             linewidth = 0.4) +
+
+  geom_vline(xintercept = 0,
+             linetype = "dashed",
+             color = "grey45",
+             linewidth = 0.4) +
+
+  stat_ellipse(
+    geom = "path",
+    linewidth = 0.4,
+    level = 0.80
+  ) +
+
+  geom_point(
+    size = 3,
+    alpha = 0.95,
+    stroke = 0.4,
+    show.legend = TRUE,
+    shape = 21,  # allows separate fill + outline
+    color = "grey45", 
+  ) +
+
+  geom_xsideboxplot(
+    aes(y = Region),
+    orientation = "y",
+    width = 0.6,
+    outlier.shape = 16,
+    outlier.size = 1.8,
+    fatten = 1,
+    color = "black",
+    linewidth = 0.7,
     show.legend = FALSE
   ) +
-  scale_color_manual(
-    name = "Region",
-    values = east_west_colors
+
+  geom_ysideboxplot(
+    aes(x = Region),
+    orientation = "x",
+    width = 0.6,
+    outlier.shape = 16,
+    outlier.size = 1.8,
+    fatten = 1,
+    color = "black",
+    linewidth = 0.7,
+    show.legend = FALSE
   ) +
-  scale_fill_manual(
-    name = "Region",
-    values = east_west_colors
+
+  scale_color_manual(values = east_west_colors) +
+  scale_fill_manual(values = east_west_colors) +
+
+labs(
+  x = paste0("PCo1 (", var_exp[1], "%)"),
+  y = paste0("PCo2 (", var_exp[2], "%)")
+)+
+
+  coord_cartesian(
+    xlim = c(-0.32, 0.28),
+    ylim = c(-0.33, 0.33)
   ) +
-  scale_size_continuous(
-    range = c(0.5, 3),
-    guide = guide_legend(
-      keywidth = 0.6,
-      keyheight = 0.6,
-      label.theme = element_text(size = 6.5)
+
+  theme_classic(base_size = 12) +
+
+  theme(
+    panel.border = element_rect(
+      color = "grey45",
+      fill = NA,
+      linewidth = 0.8
+    ),
+
+    axis.line = element_blank(),
+
+    legend.position = "right",
+
+    legend.title = element_text(size = 11),
+    legend.text = element_text(size = 10),
+
+    axis.title = element_text(size = 11),
+    axis.text = element_text(size = 9),
+
+    ggside.panel.scale = 0.25,
+
+    ggside.axis.text = element_text(size = 8),
+    ggside.axis.ticks = element_blank(),
+
+    # angle right-side labels
+    ggside.axis.text.x = element_text(
+      angle = -45
+    ),
+
+    panel.grid = element_blank(),
+
+    plot.margin = margin(10, 10, 10, 10)
+  ) +
+
+  # make legend points
+  guides(
+    color = guide_legend(
+      override.aes = list(
+        shape = 16,
+        size = 4,
+        alpha = 1
+      )
     )
   )
-
-p1
-p2
+p
 ```
+
 
 #### Plot the tanglegram with the expanded tree --------------------------------
 note: this phylosymbosis
