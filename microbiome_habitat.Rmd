@@ -1471,23 +1471,13 @@ meta$Axis02<-bac.nmds$points[,2]
 
 # install.packages("viridis") if needed
 bac_nmds <- ggplot(meta, aes(x = Axis01, y = Axis02)) +
-  geom_point(aes(color = Region), size = 2, alpha = 0.8) +
-  stat_ellipse(aes(fill = Region), geom = "polygon", alpha = 0.45, level = 0.68, show.legend = FALSE) +
-  scale_color_manual(values = east_west_colors) +
-  scale_fill_manual(values = east_west_colors) +
+  geom_point(aes(color = stateProvince), size = 2, alpha = 0.8) +
+  stat_ellipse(aes(fill = stateProvince), geom = "polygon", alpha = 0.45, level = 0.68, show.legend = FALSE) +
+  scale_color_manual(values = state_colors) +
+  scale_fill_manual(values = state_colors) +
   theme_classic() +
   labs(x = "NMDS1", y = "NMDS2") +
   ggtitle("Sørensen dissimilarity")
-bac_nmds
-
-bac_nmds <- bac_nmds +
-  geom_point(
-    data = subset(meta, stateProvince == "California"),
-    inherit.aes = TRUE,
-    size = 4,
-    color = "#FF00FF"  # standout magenta
-  )
-
 bac_nmds
 ```
 
@@ -1503,7 +1493,7 @@ Bayesian Generalized (Non-)Linear Multivariate Multilevel Models
 ### =========================
 
 melted_BC <- melt(
-  as.matrix(ps_sor_dist),
+  as.matrix(ps_bc_dist),
   varnames = c("Sample1", "Sample2"),
   value.name = "BC_Dissimilarity"
 )
@@ -1704,7 +1694,7 @@ between_range <- range(
 )
 
 between_min <- between_range[1]
-between_max <- between_range[2]
+between_max <- east_range[2]
 
 ### =========================
 ### Keep only distances that fall
@@ -1717,19 +1707,6 @@ overlap_df <- melted_diffs %>%
     geo_Distance <= between_max
   )
 
-
-# optional: check overlap range
-overlap_min
-overlap_max
-### =========================
-### Keep ONLY overlapping distances
-### =========================
-
-overlap_df <- melted_diffs %>%
-  filter(
-    geo_Distance >= overlap_min,
-    geo_Distance <= overlap_max
-  )
 
 ### =========================
 ### Plot
@@ -1759,7 +1736,7 @@ p_overlap <- ggplot(
 
   labs(
     x = "Distance (km)",
-    y = "Sor Similarity"
+    y = "BC Similarity"
   ) +
 
   theme_bw()
@@ -2003,6 +1980,243 @@ results <- data.frame(
     mantel_sor_east$signif,
     mantel_sor_west$signif,
     between_sor$p.value
+  )
+)
+
+results
+```
+
+mantel tests for overlap
+```{r}
+# =========================
+# 1. Region map + groups
+# =========================
+
+region_map <- setNames(meta$Region, meta$labtracking)
+
+east_samples <- names(region_map[region_map == "east"])
+west_samples <- names(region_map[region_map == "west"])
+
+# =========================
+# 2. Overlap distance range
+# =========================
+
+east_range <- range(
+  melted_diffs$geo_Distance[
+    melted_diffs$compairson == "within east"
+  ],
+  na.rm = TRUE
+)
+
+west_range <- range(
+  melted_diffs$geo_Distance[
+    melted_diffs$compairson == "within west"
+  ],
+  na.rm = TRUE
+)
+
+between_range <- range(
+  melted_diffs$geo_Distance[
+    melted_diffs$compairson ==
+      "between regions (east vs west)"
+  ],
+  na.rm = TRUE
+)
+
+between_min <- between_range[1]
+
+between_max <- min(
+  east_range[2],
+  west_range[2]
+)
+
+# =========================
+# 3. Mantel helper
+# =========================
+
+run_overlap_test <- function(
+    microbe_dist,
+    geo_dist,
+    sample_subset = NULL,
+    between = FALSE,
+    region_map = NULL,
+    min_dist,
+    max_dist
+) {
+
+  microbe_mat <- as.matrix(microbe_dist)
+  geo_mat <- as.matrix(geo_dist)
+
+  # -------------------------
+  # WITHIN REGION
+  # -------------------------
+
+  if (!between) {
+
+    microbe_mat <- microbe_mat[
+      sample_subset,
+      sample_subset
+    ]
+
+    geo_mat <- geo_mat[
+      sample_subset,
+      sample_subset
+    ]
+
+    upper <- upper.tri(geo_mat)
+
+    microbe_vals <- microbe_mat[upper]
+    geo_vals <- geo_mat[upper]
+
+  } else {
+
+    # -------------------------
+    # BETWEEN REGIONS
+    # -------------------------
+
+    samples <- rownames(microbe_mat)
+
+    pairs <- expand.grid(
+      sample1 = samples,
+      sample2 = samples
+    )
+
+    region1 <- region_map[pairs$sample1]
+    region2 <- region_map[pairs$sample2]
+
+    keep_between <- region1 != region2
+
+    microbe_vals <- microbe_mat[
+      cbind(pairs$sample1, pairs$sample2)
+    ][keep_between]
+
+    geo_vals <- geo_mat[
+      cbind(pairs$sample1, pairs$sample2)
+    ][keep_between]
+  }
+
+  # -------------------------
+  # overlap filter
+  # -------------------------
+
+  overlap_keep <- geo_vals >= min_dist &
+                  geo_vals <= max_dist
+
+  microbe_vals <- microbe_vals[overlap_keep]
+  geo_vals <- geo_vals[overlap_keep]
+
+  # remove NA
+  complete_keep <- complete.cases(
+    microbe_vals,
+    geo_vals
+  )
+
+  microbe_vals <- microbe_vals[complete_keep]
+  geo_vals <- geo_vals[complete_keep]
+
+  # -------------------------
+  # permutation correlation
+  # -------------------------
+
+  vegan::mantel(
+    dist(microbe_vals),
+    dist(geo_vals),
+    method = "spearman",
+    permutations = 9999
+  )
+}
+
+# =========================
+# 4. EAST
+# =========================
+
+mantel_bc_east <- run_overlap_test(
+  ps_bc_dist,
+  geo_dist,
+  sample_subset = east_samples,
+  min_dist = between_min,
+  max_dist = between_max
+)
+
+mantel_sor_east <- run_overlap_test(
+  ps_sor_dist,
+  geo_dist,
+  sample_subset = east_samples,
+  min_dist = between_min,
+  max_dist = between_max
+)
+
+# =========================
+# 5. WEST
+# =========================
+
+mantel_bc_west <- run_overlap_test(
+  ps_bc_dist,
+  geo_dist,
+  sample_subset = west_samples,
+  min_dist = between_min,
+  max_dist = between_max
+)
+
+mantel_sor_west <- run_overlap_test(
+  ps_sor_dist,
+  geo_dist,
+  sample_subset = west_samples,
+  min_dist = between_min,
+  max_dist = between_max
+)
+
+# =========================
+# 6. BETWEEN REGIONS
+# =========================
+
+between_bc <- run_overlap_test(
+  ps_bc_dist,
+  geo_dist,
+  between = TRUE,
+  region_map = region_map,
+  min_dist = between_min,
+  max_dist = between_max
+)
+
+between_sor <- run_overlap_test(
+  ps_sor_dist,
+  geo_dist,
+  between = TRUE,
+  region_map = region_map,
+  min_dist = between_min,
+  max_dist = between_max
+)
+
+# =========================
+# 7. RESULTS TABLE
+# =========================
+
+results <- data.frame(
+  group = c("east", "west", "between"),
+
+  bc_stat = c(
+    mantel_bc_east$statistic,
+    mantel_bc_west$statistic,
+    between_bc$statistic
+  ),
+
+  bc_p = c(
+    mantel_bc_east$signif,
+    mantel_bc_west$signif,
+    between_bc$signif
+  ),
+
+  sor_stat = c(
+    mantel_sor_east$statistic,
+    mantel_sor_west$statistic,
+    between_sor$statistic
+  ),
+
+  sor_p = c(
+    mantel_sor_east$signif,
+    mantel_sor_west$signif,
+    between_sor$signif
   )
 )
 
