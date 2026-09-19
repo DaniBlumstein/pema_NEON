@@ -1,5 +1,5 @@
 ---
-title: "microbiome by habitat"
+title: "NEON microbiome"
 author: "Dani Blumstein"
 date: "2025-12-30"
 output: html_document
@@ -81,15 +81,8 @@ suppressPackageStartupMessages({
 colors
 ```{r}
 habitat_colors <- c(
-  # East of Mississippi (cool / forested)
-  "Deciduous Forest"     = "#0072B2",  # true blue
-  "Mixed Forest"         = "#2CA25F",  # teal-green
-  
-  # West of Mississippi (warm / dry / managed)
-  "Cultivated Crops"     = "#E69F00",  # orange (CVD-safe, high salience)
-  "Evergreen Forest"     = "#A0522D",  # 
-  "Grassland/Herbaceous" = "#F0E442",  # yellow (excellent contrast on maps)
-  "Shrub/Scrub"          = "#D55E00"   # vermillion (distinct from crops)
+  "forest"         = "lightgreen", 
+  "prairie"     = "#9271A7"
 )
   
 east_west_colors <- c(
@@ -99,7 +92,7 @@ east_west_colors <- c(
 
 state_colors <- c(
   # WEST (warm tones)
-  "California"     = "#FF00FF",  # electric magenta (highly distinct)
+  "California"     = "yellow",  # electric magenta (highly distinct)
   "Washington"     = "#D55E00",
   "Kansas"         = "#F39B7F",
   "North Dakota"   = "#C44E52",
@@ -113,6 +106,17 @@ state_colors <- c(
   "Wisconsin"      = "#3C5488",
   "Virginia"       = "#00A087",
   "Tennessee"      = "#8491B4"
+)
+
+base_colors <- c(
+  "within east" = "#5ab4ac",
+  "within west" = "#d8b365",
+  "between regions (east vs west)" = "#D85F64"
+)
+
+line_colors <- darken(
+  base_colors,
+  0.3
 )
 ```
 
@@ -152,7 +156,7 @@ physeq <- qza_to_phyloseq(
   features  = "data/microbiome/rarefied-table.qza",
   tree      = "data/microbiome/rooted-tree.qza",
   taxonomy  = "data/microbiome/taxonomy.qza",
-  metadata  = "MicrobiotaProcess_sample_data.tsv"
+  metadata  = "MicrobiotaProcess_sample_data2.tsv"
 )
 
 #---------------------------
@@ -164,7 +168,16 @@ ps <- physeq %>%
 
 sample_names(ps) <- sample_data(ps)$labtracking
 
+ps_otu <- otu_table(ps)
+sort(rowSums(t(ps_otu)))
+
+ps_bc_dist   <- vegdist(t(ps_otu), method = "bray") 
+ps_sor_dist  <- vegdist(t(ps_otu), method = "bray", binary = TRUE)
+
 meta <- data.frame(sample_data(ps))
+
+# Assign taxa names
+taxa_names(ps3) <- TAXtab$ASVname
 
 meta$decimalLatitude  <- as.numeric(meta$decimalLatitude)
 meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
@@ -198,13 +211,13 @@ rownames(geo_dist) <- rownames(meta)
 colnames(geo_dist) <- rownames(meta)
 ```
 
-ANCOMBC
+ANCOMBC - region
 ```{r}
 # Remove uncultured / unclassified / unidentified taxa
 ps2 <- subset_taxa(
   ps,
   !grepl(
-    "uncultured|unclassified|unidentified|unknown|uncultured",
+    "uncultured|unclassified|unidentified|unknown|uncultured|uncultured_bacterium",
     Genus,
     ignore.case = TRUE
   )
@@ -243,6 +256,13 @@ unique(is.na(TAXtab$name)) # Ok, we have all names
 TAXtab$ASVname = paste(name_tmp, TAXtab$name, sep = "-")
 TAXtab$name[1:10] # ok it looks good.
 
+write.table(
+  TAXtab,
+  file = "TAXtab.tsv",
+  sep = "\t",
+  quote = FALSE
+)
+
 results_ancom_bc$ASVname = TAXtab$ASVname[match(results_ancom_bc$ASV ,rownames(TAXtab))]
 
 results_ancom_bc$Genus = TAXtab$Genus[match(results_ancom_bc$ASV ,rownames(TAXtab))]
@@ -270,7 +290,7 @@ otu_mat <- as.data.frame(otu_mat)
 # Sample metadata
 meta <- as.data.frame(sample_data(ps2))
 
-# Add stateProvince
+# Add Region
 meta$SampleID <- rownames(meta)
 
 # Convert OTU matrix to long format
@@ -281,12 +301,12 @@ otu_long <- otu_mat %>%
     names_to = "SampleID",
     values_to = "Abundance"
   ) %>%
-  left_join(meta[, c("SampleID", "stateProvince")],
+  left_join(meta[, c("SampleID", "Region")],
             by = "SampleID")
 
 # Get dominant state for each ASV
 asv_state <- otu_long %>%
-  group_by(ASV, stateProvince) %>%
+  group_by(ASV, Region) %>%
   summarise(total_abundance = sum(Abundance), .groups = "drop") %>%
   group_by(ASV) %>%
   slice_max(total_abundance, n = 1, with_ties = FALSE) %>%
@@ -295,14 +315,14 @@ asv_state <- otu_long %>%
 # Merge into ANCOMBC results
 results_ancom_bc <- left_join(
   results_ancom_bc,
-  asv_state[, c("ASV", "stateProvince")],
+  asv_state[, c("ASV", "Region")],
   by = "ASV"
 )
 
 ggplot(results_ancom_bc,
        aes(x = as.numeric(lcf),
            y = -log10(as.numeric(q_value)),
-           color = stateProvince)) +
+           color = Region)) +
   
   geom_point(size = 3, alpha = 0.9) +
   
@@ -327,7 +347,7 @@ ggplot(results_ancom_bc,
     x = "Log2 Fold Change",
     y = expression(-log[10](q-value)),
     title = "Differentially Abundant Taxa",
-    color = "State"
+    color = "Region"
   ) +
   
   theme_bw(base_size = 18) +
@@ -349,6 +369,1000 @@ melted = reshape2::melt(AASVtab_sig, values = "Region")
 melted$variable = factor(melted$variable, levels = rev(results_sig$ASVname))
 ```
 
+ANCOM-BC - Habitat
+```{r}
+# ============================================================
+# 1. Remove uncultured / unclassified / unidentified taxa
+# ============================================================
+
+ps2 <- subset_taxa(
+  ps,
+  !grepl(
+    "uncultured|unclassified|unidentified|unknown|uncultured_bacterium",
+    Genus,
+    ignore.case = TRUE
+  )
+)
+
+# ============================================================
+# 2. Make sure habitat is a factor
+# ============================================================
+
+meta <- data.frame(sample_data(ps2))
+meta$SampleID <- rownames(meta)
+
+meta$habitat <- factor(meta$habitat)
+
+# Check the two habitat groups
+table(meta$habitat)
+
+# See the order of the levels
+levels(meta$habitat)
+
+# ============================================================
+# 3. Make sure habitat is in the phyloseq metadata
+# ============================================================
+
+sample_data(ps2)$habitat <- meta$habitat[
+  match(sample_names(ps2), meta$SampleID)
+]
+
+# ============================================================
+# 4. Run ANCOM-BC
+# ============================================================
+
+out <- ancombc(
+  data = ps2,
+  formula = "habitat",
+  p_adj_method = "fdr"
+)
+
+# ============================================================
+# 5. Identify the habitat coefficient
+# ============================================================
+
+# With a binary variable, ANCOM-BC will produce one
+# coefficient comparing the second level to the first.
+#
+# Check the available coefficient names:
+colnames(out$res$lfc)
+
+# ============================================================
+# 6. Extract habitat results
+# ============================================================
+
+habitat_coef <- setdiff(
+  colnames(out$res$lfc),
+  "taxon"
+)
+
+habitat_coef
+
+results_ancom_bc <- data.frame(
+  ASV = out$res$lfc$taxon,
+  lcf = out$res$lfc$habitatprairie,
+  W = out$res$W$habitatprairie,
+  p_val = out$res$p_val$habitatprairie,
+  q_value = out$res$q_val$habitatprairie,
+  Diff_ab = out$res$diff_abn$habitatprairie
+)
+
+# ============================================================
+# 7. Add interpretation of direction
+# ============================================================
+
+# The coefficient represents:
+# second habitat level vs first habitat level
+
+habitat_levels <- levels(meta$habitat)
+
+results_ancom_bc$association <- ifelse(
+  results_ancom_bc$q_value < 0.05 &
+    results_ancom_bc$lcf > 0,
+  habitat_levels[2],
+  "Not Significant"
+)
+
+results_ancom_bc$association <- ifelse(
+  results_ancom_bc$q_value < 0.05 &
+    results_ancom_bc$lcf < 0,
+  habitat_levels[1],
+  results_ancom_bc$association
+)
+
+# Add contrast name
+results_ancom_bc$Contrast <- paste(
+  habitat_levels[2],
+  "vs",
+  habitat_levels[1]
+)
+
+# ============================================================
+# 8. Add taxonomy
+# ============================================================
+
+TAXtab <- as.data.frame(tax_table(ps2))
+
+name_tmp <- sprintf(
+  "ASV%s",
+  seq(1, nrow(TAXtab))
+)
+
+TAXtab$name <- TAXtab$Species
+
+TAXtab$name <- ifelse(
+  is.na(TAXtab$name),
+  TAXtab$Genus,
+  TAXtab$name
+)
+
+TAXtab$name <- ifelse(
+  is.na(TAXtab$name),
+  TAXtab$Family,
+  TAXtab$name
+)
+
+TAXtab$name <- ifelse(
+  is.na(TAXtab$name),
+  TAXtab$Order,
+  TAXtab$name
+)
+
+TAXtab$name <- ifelse(
+  is.na(TAXtab$name),
+  TAXtab$Class,
+  TAXtab$name
+)
+
+TAXtab$name <- ifelse(
+  is.na(TAXtab$name),
+  TAXtab$Phylum,
+  TAXtab$name
+)
+
+TAXtab$ASVname <- paste(
+  name_tmp,
+  TAXtab$name,
+  sep = "-"
+)
+
+# ============================================================
+# 9. Save taxonomy table
+# ============================================================
+
+write.table(
+  TAXtab,
+  file = "TAXtab.tsv",
+  sep = "\t",
+  quote = FALSE
+)
+
+# ============================================================
+# 10. Add ASV names and genus
+# ============================================================
+
+results_ancom_bc$ASVname <- TAXtab$ASVname[
+  match(
+    results_ancom_bc$ASV,
+    rownames(TAXtab)
+  )
+]
+
+results_ancom_bc$Genus <- TAXtab$Genus[
+  match(
+    results_ancom_bc$ASV,
+    rownames(TAXtab)
+  )
+]
+
+# ============================================================
+# 11. Significant ASVs
+# ============================================================
+
+results_sig <- results_ancom_bc %>%
+  filter(q_value < 0.05)
+
+table(results_sig$Diff_ab)
+table(
+  results_sig$association
+)
+
+# ============================================================
+# 12. Calculate ASV abundance
+# ============================================================
+
+otu_mat <- as.data.frame(otu_table(ps2))
+
+# Make sure taxa are rows
+if (!taxa_are_rows(ps2)) {
+  otu_mat <- t(otu_mat)
+}
+
+otu_mat <- as.data.frame(otu_mat)
+
+ASV_abundance <- rowSums(otu_mat)
+
+results_sig$sum_abundance <- ASV_abundance[
+  match(
+    results_sig$ASV,
+    names(ASV_abundance)
+  )
+]
+
+results_sig <- results_sig %>%
+  arrange(desc(sum_abundance))
+
+# ============================================================
+# 13. Keep top 14 significant ASVs
+# ============================================================
+
+results_sig <- results_sig %>%
+  slice_head(n = 14)
+
+results_sig$ASVname <- factor(
+  results_sig$ASVname,
+  levels = rev(results_sig$ASVname)
+)
+
+# ============================================================
+# 14. Volcano plot
+# ============================================================
+
+ggplot(
+  results_ancom_bc,
+  aes(
+    x = as.numeric(lcf),
+    y = -log10(as.numeric(q_value))
+  )
+) +
+
+  geom_point(
+    size = 3,
+    alpha = 0.9
+  ) +
+
+  geom_text_repel(
+    data = subset(
+      results_ancom_bc,
+      q_value < 0.05
+    ),
+    aes(label = ASVname),
+    size = 4,
+    max.overlaps = 20
+  ) +
+
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    color = "gray50",
+    linewidth = 0.8
+  ) +
+
+  geom_hline(
+    yintercept = -log10(0.05),
+    linetype = "dashed",
+    color = "gray50",
+    linewidth = 0.8
+  ) +
+
+  labs(
+    x = "Log2 Fold Change",
+    y = expression(-log[10](q-value)),
+    title = paste(
+      "Differentially Abundant Taxa:",
+      habitat_levels[2],
+      "vs",
+      habitat_levels[1]
+    )
+  ) +
+
+  theme_bw(base_size = 18) +
+
+  theme(
+    plot.title = element_text(
+      size = 22,
+      face = "bold",
+      hjust = 0.5
+    ),
+    axis.title = element_text(
+      size = 16
+    ),
+    axis.text = element_text(
+      size = 16
+    ),
+    panel.grid = element_blank()
+  )
+
+# ============================================================
+# 15. Relative abundance table
+# ============================================================
+
+ASVtab_rel <- decostand(
+  t(otu_mat),
+  method = "total"
+)
+
+# Significant ASVs
+sig_ASVs <- unique(
+  results_sig$ASV
+)
+
+ASVtab_sig <- ASVtab_rel[
+  ,
+  colnames(ASVtab_rel) %in% sig_ASVs,
+  drop = FALSE
+]
+
+# Rename ASVs
+asv_names <- results_sig %>%
+  distinct(ASV, .keep_all = TRUE)
+
+colnames(ASVtab_sig) <- asv_names$ASVname[
+  match(
+    colnames(ASVtab_sig),
+    asv_names$ASV
+  )
+]
+
+# ============================================================
+# 16. Add habitat
+# ============================================================
+
+meta <- as.data.frame(sample_data(ps2))
+meta$SampleID <- rownames(meta)
+
+ASVtab_sig <- as.data.frame(ASVtab_sig)
+
+ASVtab_sig$habitat <- meta$habitat[
+  match(
+    rownames(ASVtab_sig),
+    meta$SampleID
+  )
+]
+
+# ============================================================
+# 17. Melt for plotting
+# ============================================================
+
+melted <- reshape2::melt(
+  ASVtab_sig,
+  id.vars = "habitat"
+)
+
+melted$variable <- factor(
+  melted$variable,
+  levels = rev(
+    colnames(ASVtab_sig)[
+      colnames(ASVtab_sig) != "habitat"
+    ]
+  )
+)
+```
+
+ANCOM-BC - Continuous Temperature
+```{r}
+# ============================================================
+# 1. Remove uncultured / unclassified / unidentified taxa
+# ============================================================
+
+ps2 <- subset_taxa(
+  ps,
+  !grepl(
+    "uncultured|unclassified|unidentified|unknown|uncultured_bacterium",
+    Genus,
+    ignore.case = TRUE
+  )
+)
+
+# ============================================================
+# 2. Make sure temp is numeric
+# ============================================================
+
+sample_data(ps2)$temp <- as.numeric(
+  as.character(sample_data(ps2)$temp)
+)
+
+# ============================================================
+# 3. Remove samples with missing temperature
+# ============================================================
+
+keep_samples <- !is.na(
+  sample_data(ps2)$temp
+)
+
+ps2 <- prune_samples(
+  keep_samples,
+  ps2
+)
+
+# Remove taxa that are now completely absent
+ps2 <- prune_taxa(
+  taxa_sums(ps2) > 0,
+  ps2
+)
+
+# Check temperature
+cat("\nTemperature summary:\n")
+print(summary(sample_data(ps2)$temp))
+
+cat("\nNumber of samples:\n")
+print(nsamples(ps2))
+
+# ============================================================
+# 4. Run ANCOM-BC
+# ============================================================
+
+out <- ancombc(
+  data = ps2,
+  formula = "temp",
+  p_adj_method = "fdr"
+)
+
+# Check coefficient names
+cat("\nANCOM-BC coefficient names:\n")
+print(colnames(out$res$lfc))
+
+# ============================================================
+# 5. Extract temperature results
+# ============================================================
+
+results_ancom_bc <- data.frame(
+  ASV = out$res$lfc$taxon,
+  lfc = out$res$lfc$temp,
+  W = out$res$W$temp,
+  p_val = out$res$p_val$temp,
+  q_value = out$res$q_val$temp,
+  Diff_ab = out$res$diff_abn$temp,
+  stringsAsFactors = FALSE
+)
+
+# ============================================================
+# 6. Remove rows with missing statistics
+# ============================================================
+
+results_ancom_bc <- results_ancom_bc %>%
+  filter(
+    !is.na(lfc),
+    !is.na(q_value)
+  )
+
+# ============================================================
+# 7. Define direction of temperature association
+# ============================================================
+
+results_ancom_bc$association <- "Not Significant"
+
+results_ancom_bc$association[
+  results_ancom_bc$q_value < 0.05 &
+    results_ancom_bc$lfc > 0
+] <- "Increases with temperature"
+
+results_ancom_bc$association[
+  results_ancom_bc$q_value < 0.05 &
+    results_ancom_bc$lfc < 0
+] <- "Decreases with temperature"
+
+# ============================================================
+# 8. Taxonomy table
+# ============================================================
+
+TAXtab <- as.data.frame(
+  tax_table(ps2)
+)
+
+TAXtab$ASV <- rownames(TAXtab)
+
+# ------------------------------------------------------------
+# Make a taxonomic name using the most specific available
+# ------------------------------------------------------------
+
+TAXtab$name <- NA_character_
+
+tax_levels <- c(
+  "Species",
+  "Genus",
+  "Family",
+  "Order",
+  "Class",
+  "Phylum"
+)
+
+for (tax_level in tax_levels) {
+
+  if (tax_level %in% colnames(TAXtab)) {
+
+    TAXtab$name[
+      is.na(TAXtab$name) |
+        TAXtab$name == ""
+    ] <- as.character(
+      TAXtab[[tax_level]][
+        is.na(TAXtab$name) |
+          TAXtab$name == ""
+      ]
+    )
+  }
+}
+
+# Replace any remaining missing names
+TAXtab$name[
+  is.na(TAXtab$name) |
+    TAXtab$name == ""
+] <- "Unclassified"
+
+# ============================================================
+# 9. Create ASV names
+# ============================================================
+
+TAXtab$ASVname <- paste(
+  paste0(
+    "ASV",
+    seq_len(nrow(TAXtab))
+  ),
+  TAXtab$name,
+  sep = "-"
+)
+
+# ============================================================
+# 10. Save taxonomy table
+# ============================================================
+
+write.table(
+  TAXtab,
+  file = "TAXtab.tsv",
+  sep = "\t",
+  quote = FALSE,
+  row.names = TRUE
+)
+
+# ============================================================
+# 11. Add taxonomy to ANCOM-BC results
+# ============================================================
+
+results_ancom_bc$ASVname <- TAXtab$ASVname[
+  match(
+    results_ancom_bc$ASV,
+    TAXtab$ASV
+  )
+]
+
+# Add Genus if available
+if ("Genus" %in% colnames(TAXtab)) {
+
+  results_ancom_bc$Genus <- TAXtab$Genus[
+    match(
+      results_ancom_bc$ASV,
+      TAXtab$ASV
+    )
+  ]
+
+} else {
+
+  results_ancom_bc$Genus <- NA_character_
+
+}
+
+# ============================================================
+# 12. Significant ASVs
+# ============================================================
+
+results_sig <- results_ancom_bc %>%
+  filter(q_value < 0.05)
+
+cat(
+  "\nNumber of significant ASVs (q < 0.05): ",
+  nrow(results_sig),
+  "\n",
+  sep = ""
+)
+
+cat("\nDirection of significant associations:\n")
+print(table(results_sig$association))
+
+# ============================================================
+# 13. Get OTU table
+# ============================================================
+
+otu_mat <- as.data.frame(
+  otu_table(ps2)
+)
+
+# Make sure taxa are rows
+if (!taxa_are_rows(ps2)) {
+  otu_mat <- t(otu_mat)
+}
+
+otu_mat <- as.data.frame(otu_mat)
+
+# ============================================================
+# 14. Total abundance per ASV
+# ============================================================
+
+ASV_abundance <- rowSums(
+  otu_mat
+)
+
+results_ancom_bc$sum_abundance <- ASV_abundance[
+  match(
+    results_ancom_bc$ASV,
+    names(ASV_abundance)
+  )
+]
+
+results_sig$sum_abundance <- ASV_abundance[
+  match(
+    results_sig$ASV,
+    names(ASV_abundance)
+  )
+]
+
+# ============================================================
+# 15. Sort significant ASVs by abundance
+# ============================================================
+
+results_sig <- results_sig %>%
+  arrange(
+    desc(sum_abundance)
+  )
+
+# ============================================================
+# 16. Top 14 significant ASVs
+# ============================================================
+
+results_sig_top <- results_sig %>%
+  slice_head(n = 14)
+
+if (nrow(results_sig_top) > 0) {
+
+  results_sig_top$ASVname <- factor(
+    results_sig_top$ASVname,
+    levels = rev(
+      results_sig_top$ASVname
+    )
+  )
+
+}
+
+# ============================================================
+# 17. Volcano plot
+# ============================================================
+
+p_volcano <- ggplot(
+  results_ancom_bc,
+  aes(
+    x = lfc,
+    y = -log10(q_value),
+    color = association
+  )
+) +
+
+  geom_point(
+    size = 3,
+    alpha = 0.9
+  ) +
+
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    color = "gray50",
+    linewidth = 0.8
+  ) +
+
+  geom_hline(
+    yintercept = -log10(0.05),
+    linetype = "dashed",
+    color = "gray50",
+    linewidth = 0.8
+  ) +
+
+  scale_color_manual(
+    values = c(
+      "Increases with temperature" = "#D73027",
+      "Decreases with temperature" = "#4575B4",
+      "Not Significant" = "gray70"
+    )
+  ) +
+
+  labs(
+    x = "Temperature Log2 Fold Change",
+    y = expression(-log[10](q-value)),
+    title = "Differentially Abundant Taxa Along Temperature Gradient",
+    color = "Temperature association"
+  ) +
+
+  theme_bw(
+    base_size = 18
+  ) +
+
+  theme(
+    plot.title = element_text(
+      size = 22,
+      face = "bold",
+      hjust = 0.5
+    ),
+    axis.title = element_text(
+      size = 16
+    ),
+    axis.text = element_text(
+      size = 16
+    ),
+    legend.title = element_text(
+      size = 16,
+      face = "bold"
+    ),
+    legend.text = element_text(
+      size = 14
+    ),
+    panel.grid = element_blank()
+  )
+
+# ------------------------------------------------------------
+# Add labels ONLY if significant ASVs exist
+# ------------------------------------------------------------
+
+if (nrow(results_sig) > 0) {
+
+  p_volcano <- p_volcano +
+    geom_text_repel(
+      data = results_sig,
+      aes(
+        label = ASVname
+      ),
+      size = 4,
+      max.overlaps = 20
+    )
+
+}
+
+# Display volcano plot
+print(p_volcano)
+
+# ============================================================
+# 18. Relative abundance table
+# ============================================================
+
+ASVtab_rel <- decostand(
+  t(otu_mat),
+  method = "total"
+)
+
+# ============================================================
+# 19. Keep significant ASVs
+# ============================================================
+
+sig_ASVs <- unique(
+  results_sig$ASV
+)
+
+if (length(sig_ASVs) > 0) {
+
+  ASVtab_sig <- ASVtab_rel[
+    ,
+    colnames(ASVtab_rel) %in% sig_ASVs,
+    drop = FALSE
+  ]
+
+} else {
+
+  ASVtab_sig <- ASVtab_rel[
+    ,
+    FALSE,
+    drop = FALSE
+  ]
+
+}
+
+cat(
+  "\nNumber of significant ASV columns in abundance table: ",
+  ncol(ASVtab_sig),
+  "\n",
+  sep = ""
+)
+
+# ============================================================
+# 20. Rename significant ASVs
+# ============================================================
+
+if (ncol(ASVtab_sig) > 0) {
+
+  asv_names <- results_sig %>%
+    distinct(
+      ASV,
+      .keep_all = TRUE
+    )
+
+  new_names <- asv_names$ASVname[
+    match(
+      colnames(ASVtab_sig),
+      asv_names$ASV
+    )
+  ]
+
+  # Keep ASV ID if a name could not be matched
+  new_names[
+    is.na(new_names)
+  ] <- colnames(
+    ASVtab_sig
+  )[
+    is.na(new_names)
+  ]
+
+  colnames(ASVtab_sig) <- new_names
+
+}
+
+# ============================================================
+# 21. Add temperature to abundance table
+# ============================================================
+
+meta <- as.data.frame(
+  sample_data(ps2)
+)
+
+meta$SampleID <- rownames(meta)
+
+ASVtab_sig$temp <- meta$temp[
+  match(
+    rownames(ASVtab_sig),
+    meta$SampleID
+  )
+]
+
+# ============================================================
+# 22. Melt abundance table
+# ============================================================
+
+if (ncol(ASVtab_sig) > 1) {
+
+  melted <- reshape2::melt(
+    ASVtab_sig,
+    id.vars = "temp",
+    variable.name = "ASVname",
+    value.name = "RelativeAbundance"
+  )
+
+  melted$ASVname <- factor(
+    melted$ASVname,
+    levels = rev(
+      unique(melted$ASVname)
+    )
+  )
+
+} else {
+
+  melted <- NULL
+
+  message(
+    "\nNo ASVs were significant at q < 0.05.",
+    "\n'melted' was set to NULL."
+  )
+
+}
+
+# ============================================================
+# 23. Results tables
+# ============================================================
+
+# All ANCOM-BC results
+results_ancom_bc <- results_ancom_bc %>%
+  arrange(
+    q_value
+  )
+
+# Significant results only
+results_sig <- results_ancom_bc %>%
+  filter(
+    q_value < 0.05
+  )
+
+# ============================================================
+# 24. Print the most important results
+# ============================================================
+
+cat("\n============================================\n")
+cat("ANCOM-BC CONTINUOUS TEMPERATURE RESULTS\n")
+cat("============================================\n\n")
+
+cat(
+  "Total ASVs tested: ",
+  nrow(results_ancom_bc),
+  "\n",
+  sep = ""
+)
+
+cat(
+  "Significant ASVs (q < 0.05): ",
+  nrow(results_sig),
+  "\n",
+  sep = ""
+)
+
+if (nrow(results_sig) > 0) {
+
+  cat("\nSignificant taxa:\n")
+
+  print(
+    results_sig %>%
+      select(
+        ASV,
+        ASVname,
+        Genus,
+        lfc,
+        p_val,
+        q_value,
+        association
+      )
+  )
+
+} else {
+
+  cat(
+    "\nNo ASVs were significant at q < 0.05.\n"
+  )
+
+}
+```
+
+ASV by genus trees loop and multipannel
+```{r}
+genus_list <- unique(tax_table(ps_top10)[, "Genus"])
+genus_list <- genus_list[!is.na(genus_list)]
+
+plot_list <- list()
+
+for (g in genus_list) {
+
+  ps_g <- subset_taxa(ps2, Genus == g)
+
+  # skip if no taxa
+  if (ntaxa(ps_g) == 0) next
+
+  # skip if no tree
+  if (is.null(phy_tree(ps_g, errorIfNULL = FALSE))) next
+
+  tree <- phy_tree(ps_g)
+
+  # sometimes pruning breaks tree validity
+  if (is.null(tree)) next
+
+  tree_plot <- ggtree(tree)
+  tree_plot <- revts(tree_plot)
+
+  tree_df <- psmelt(ps_g) %>%
+    select(OTU, Region) %>%
+    filter(!is.na(Region)) %>%
+    distinct()
+
+  tree_df$name <- TAXtab[match(tree_df$OTU, TAXtab$ASVname), "name"]
+  tree_df$label_name <- ifelse(!duplicated(tree_df$name), tree_df$name, NA)
+
+  p <- tree_plot %<+% tree_df +
+    geom_tippoint(aes(color = Region),
+                  alpha = 0.6,
+                  size = 0.7) +
+    geom_tiplab(
+      aes(label = label_name),
+      align = FALSE,
+      linetype = NULL,
+      size = 3,
+      offset = 0.002,
+      hjust = 0,
+      na.rm = TRUE
+    ) +
+    scale_color_manual(values = east_west_colors) +
+    ggtitle(g) +
+    theme_tree2() +
+    theme(
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+      legend.position = "none"
+    ) +
+    expand_limits(x = max(tree_plot$data$x) + 0.02)
+
+  plot_list[[g]] <- p
+}
+
+wrap_plots(plot_list, ncol = 3)
+```
+
 ASV by genus trees
 ```{r}
 # 1. Agglomerate taxa to Genus level
@@ -368,18 +1382,31 @@ top10_names <- names(sort(taxa_sums(ps_genus), decreasing = TRUE))[1:10]
 ps_top10 <- prune_taxa(top10_names, ps_genus)
 tax_table(ps_top10)
 
+ps3 <- ps2
+
 # Assign taxa names
-taxa_names(ps2) <- TAXtab$ASVname
+taxa_names(ps3) <- TAXtab$ASVname
 
 
 # Select genus of interest
 g <- "Lactobacillus"
+#Ruminococcus"
+#Desulfovibrio"
+#Helicobacter"
+#Colidextribacter"
+#Lachnospiraceae_UCG-006"
+#Roseburia"
+#Muribaculaceae"
+#Lachnospiraceae_UCG-001"
+#Lachnospiraceae_NK4A136_group"
+#Lactobacillus"
 
 # Subset phyloseq object for that genus
-ps_g <- subset_taxa(ps2, Genus == g)
+ps_g <- subset_taxa(ps3, Genus == g)
+phy_tree <- phy_tree(ps_g)
 
 # Create tree plot
-tree_plot <- ggtree(phy_tree(ps_g))
+tree_plot <- ggtree(phy_tree)
 
 asvtree<- phy_tree(ps_g)
 plotTree(phy_tree(ps_g),fsize=0.8,ftype="i",
@@ -387,8 +1414,8 @@ plotTree(phy_tree(ps_g),fsize=0.8,ftype="i",
 
 # Extract OTU and Region information
 tree_df <- psmelt(ps_g) %>%
-  dplyr::select(OTU, stateProvince,Abundance) %>%
-  filter(!is.na(stateProvince)) %>%
+  dplyr::select(OTU, stateProvince,Abundance, Region) %>%
+  filter(!is.na(Region)) %>%
   distinct()
 
 # Add taxonomy name
@@ -415,7 +1442,7 @@ clade_labels <- tip_positions %>%
 tree_plot_flipped <- revts(tree_plot)
 
 tree_plot %<+% tree_df +
-  geom_tippoint(aes(color = stateProvince),
+  geom_tippoint(aes(color = Region),
                 alpha = 0.5,
                 size = 2.5) +
 
@@ -445,76 +1472,1306 @@ tree_plot %<+% tree_df +
   expand_limits(x = max(tree_plot$data$x) + 0.02)
 ```
 
-ASV by genus trees loop and multipannel
+genus phylo and geo matrix
 ```{r}
-genus_list <- unique(tax_table(ps_top10)[, "Genus"])
-genus_list <- genus_list[!is.na(genus_list)]
+# Subset phyloseq object for that genus
+ps_g <- subset_taxa(ps2, Genus == g)
+phy_tree <- phy_tree(ps_g)
+phy_matrix <- cophenetic(phy_tree)
+print(phy_matrix)
+
+# setting
+individual_col <- "labtracking"
+lat_col <- "decimalLatitude"
+lon_col <- "decimalLongitude"
+
+summary_fun <- "mean"   # "mean", "min", or "median"
+output_units <- "km"    # "km" or "m"
+
+# -----------------------------
+# Extract ASV table and metadata
+# -----------------------------
+
+asv_tab <- as(otu_table(ps_g), "matrix")
+
+if (!taxa_are_rows(ps_g)) {
+  asv_tab <- t(asv_tab)
+}
+
+meta <- data.frame(sample_data(ps_g), check.names = FALSE)
+
+# Align metadata to samples
+sample_ids <- colnames(asv_tab)
+meta <- meta[sample_ids, , drop = FALSE]
+
+# -----------------------------
+# Remove duplicate ASV names if present
+# -----------------------------
+
+if (any(duplicated(rownames(asv_tab)))) {
+  stop("Duplicate ASV names found in rownames(asv_tab). Fix ASV names before making the matrix.")
+}
+
+# -----------------------------
+# Make ASV x individual presence/absence matrix
+# -----------------------------
+
+asv_pa_sample <- asv_tab > 0
+
+individuals <- unique(meta[[individual_col]])
+
+asv_by_ind <- sapply(individuals, function(ind) {
+  samples_for_ind <- rownames(meta)[meta[[individual_col]] == ind]
+  rowSums(asv_pa_sample[, samples_for_ind, drop = FALSE]) > 0
+})
+
+asv_by_ind <- as.matrix(asv_by_ind)
+mode(asv_by_ind) <- "numeric"
+
+rownames(asv_by_ind) <- rownames(asv_tab)
+colnames(asv_by_ind) <- individuals
+
+# -----------------------------
+# Remove ASVs absent from all individuals
+# -----------------------------
+
+#asv_by_ind <- asv_by_ind[rowSums(asv_by_ind) > 0, , drop = FALSE]
+
+# -----------------------------
+# Get one lat/long per individual
+# -----------------------------
+
+individual_coords <- meta[
+  !duplicated(meta[[individual_col]]),
+  c(individual_col, lon_col, lat_col),
+  drop = FALSE
+]
+
+individual_coords <- individual_coords[
+  complete.cases(individual_coords[, c(lon_col, lat_col)]),
+  ,
+  drop = FALSE
+]
+
+rownames(individual_coords) <- individual_coords[[individual_col]]
+
+# Keep only individuals with coordinates
+common_inds <- intersect(colnames(asv_by_ind), rownames(individual_coords))
+
+#asv_by_ind <- asv_by_ind[, common_inds, drop = FALSE]
+individual_coords <- individual_coords[common_inds, , drop = FALSE]
+
+# -----------------------------
+# Calculate individual geographic distances ONCE
+# -----------------------------
+
+ind_coords_mat <- as.matrix(individual_coords[, c(lon_col, lat_col)])
+
+ind_geo_dist <- geosphere::distm(
+  ind_coords_mat,
+  ind_coords_mat,
+  fun = geosphere::distHaversine
+)
+
+rownames(ind_geo_dist) <- rownames(individual_coords)
+colnames(ind_geo_dist) <- rownames(individual_coords)
+
+# -----------------------------
+# Build ASV x ASV geographic distance matrix
+# -----------------------------
+
+asvs <- rownames(asv_by_ind)
+
+asv_geo_dist <- matrix(
+  NA_real_,
+  nrow = length(asvs),
+  ncol = length(asvs),
+  dimnames = list(asvs, asvs)
+)
+
+summarize_distance <- switch(
+  summary_fun,
+  mean = mean,
+  min = min,
+  median = median
+)
+
+for (i in seq_along(asvs)) {
+  inds_i <- colnames(asv_by_ind)[asv_by_ind[i, ] > 0]
+
+  for (j in i:length(asvs)) {
+    inds_j <- colnames(asv_by_ind)[asv_by_ind[j, ] > 0]
+
+    pairwise_distances <- ind_geo_dist[inds_i, inds_j, drop = FALSE]
+
+    d <- summarize_distance(pairwise_distances, na.rm = TRUE)
+
+    asv_geo_dist[i, j] <- d
+    asv_geo_dist[j, i] <- d
+  }
+}
+
+diag(asv_geo_dist) <- 0
+
+if (output_units == "km") {
+  asv_geo_dist <- asv_geo_dist / 1000
+}
+```
+
+plots
+```{r}
+# phy_matrix = ASV x ASV phylogenetic distance matrix
+# asv_geo_dist   = ASV x ASV geographic distance matrix
+
+# Make sure both matrices are in the same ASV order
+common_asvs <- intersect(rownames(phy_matrix), rownames(asv_geo_dist))
+
+phy_matrix <- phy_matrix[common_asvs, common_asvs]
+asv_geo_dist <- asv_geo_dist[common_asvs, common_asvs]
+
+# Pull out only the lower triangle
+lower_tri <- lower.tri(phy_matrix)
+
+plot_df <- data.frame(
+  ASV1 = rownames(phy_matrix)[row(phy_matrix)[lower_tri]],
+  ASV2 = colnames(phy_matrix)[col(phy_matrix)[lower_tri]],
+  phy_matrix = phy_matrix[lower_tri],
+  asv_geo_dist = asv_geo_dist[lower_tri]
+)
+
+# Remove missing / infinite values
+plot_df <- plot_df %>%
+  filter(
+    !is.na(phy_matrix),
+    !is.na(asv_geo_dist),
+    is.finite(phy_matrix),
+    is.finite(asv_geo_dist)
+  )
+
+library(ggExtra)
+library(cowplot)
+
+p1 <- ggplot(plot_df, aes(x = asv_geo_dist, y = phy_matrix)) +
+  geom_bin2d(bins = 80) +
+  geom_point(alpha = 0.001, size = 0.1) +
+  scale_fill_viridis_c(option = "magma", trans = "log10") +
+  theme_classic() +
+  labs(
+    x = "Geographic distance between ASVs (km)",
+    y = "Phylogenetic distance between ASVs",
+    fill = "ASV pairs",
+    title = g
+  ) +
+  theme(
+    legend.position = "right"
+  )
+
+# Extract the legend
+asv_legend <- cowplot::get_legend(p1)
+
+# Make the marginal plot without the legend
+p1_no_legend <- p1 +
+  theme(legend.position = "none")
+
+p1_marginal <- ggMarginal(
+  p1_no_legend,
+  type = "histogram",
+  bins = 60,
+  fill = "orange",
+  color = "white"
+)
+
+# Put legend outside the marginal histograms
+final_plot <- cowplot::plot_grid(
+  p1_marginal,
+  asv_legend,
+  nrow = 1,
+  rel_widths = c(1, 0.18)
+)
+
+final_plot
+
+p2 <- ggplot(plot_df, aes(x = asv_geo_dist, y = phy_matrix)) +
+  geom_point(
+    alpha = 0.25,
+    size = 1.2,
+    color = "darkorange"
+  ) +
+  geom_smooth(
+    method = "lm",
+    se = TRUE,
+    color = "black",
+    fill = "gray70",
+    linewidth = 1
+  ) +
+  theme_classic() +
+  labs(
+    title = g,
+    x = "Geographic distance between ASVs (km)",
+    y = "Phylogenetic distance between ASVs"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+p2 
+
+mantel_result <- mantel(
+  as.dist(phy_matrix),
+  as.dist(asv_geo_dist),
+  method = "spearman",
+  permutations = 999
+)
+
+mantel_result
+```
+
+asv phylo and geo matrix
+```{r}
+# Use your original full phyloseq object, not the genus-subsetted one
+# Example:
+ps_full <- ps
+
+ambiguous_pattern <- paste(
+  c(
+    "uncultured",
+    "unidentified",
+    "metagenome",
+    "bacterium",
+    "organism",
+    "sp\\.",
+    "spp\\.",
+    "cf\\.",
+    "aff\\."
+  ),
+  collapse = "|"
+)
+
+# -----------------------------
+# Find top 10 named species
+# -----------------------------
+
+tax_df <- as.data.frame(tax_table(ps_full), check.names = FALSE)
+
+otu_mat <- as(otu_table(ps_full), "matrix")
+
+if (!taxa_are_rows(ps_full)) {
+  otu_mat <- t(otu_mat)
+}
+
+tax_df$ASV <- rownames(tax_df)
+tax_df$total_abundance <- rowSums(otu_mat)
+
+tax_named <- tax_df %>%
+  filter(
+    !is.na(.data[[species_col]]),
+    .data[[species_col]] != "",
+    !grepl(ambiguous_pattern, .data[[species_col]], ignore.case = TRUE)
+  )
+
+top10_species <- tax_named %>%
+  group_by(.data[[species_col]]) %>%
+  summarize(
+    species_abundance = sum(total_abundance),
+    n_asvs = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(species_abundance)) %>%
+  slice_head(n = 10)
+
+print(top10_species)
+
+top10_asvs <- tax_named %>%
+  filter(.data[[species_col]] %in% top10_species[[species_col]]) %>%
+  pull(ASV)
+
+ps_top10_species <- prune_taxa(top10_asvs, ps_full)
+
+# -----------------------------
+# Remake phylogenetic distance matrix
+# -----------------------------
+
+phy_matrix <- cophenetic(phy_tree(ps_top10_species))
+
+# -----------------------------
+# Remake geographic ASV distance matrix
+# -----------------------------
+
+asv_tab <- as(otu_table(ps_top10_species), "matrix")
+
+if (!taxa_are_rows(ps_top10_species)) {
+  asv_tab <- t(asv_tab)
+}
+
+meta <- data.frame(sample_data(ps_top10_species), check.names = FALSE)
+
+needed_cols <- c(individual_col, lat_col, lon_col)
+missing_cols <- setdiff(needed_cols, colnames(meta))
+
+if (length(missing_cols) > 0) {
+  stop("Missing metadata columns: ", paste(missing_cols, collapse = ", "))
+}
+
+sample_ids <- colnames(asv_tab)
+
+if (!all(sample_ids %in% rownames(meta))) {
+  missing_samples <- setdiff(sample_ids, rownames(meta))
+  stop(
+    "Some OTU-table sample names are missing from sample_data rownames. Examples: ",
+    paste(head(missing_samples), collapse = ", ")
+  )
+}
+
+meta <- meta[sample_ids, , drop = FALSE]
+
+asv_pa_sample <- asv_tab > 0
+
+individuals <- unique(meta[[individual_col]])
+
+asv_by_ind <- sapply(individuals, function(ind) {
+  samples_for_ind <- rownames(meta)[meta[[individual_col]] == ind]
+  rowSums(asv_pa_sample[, samples_for_ind, drop = FALSE]) > 0
+})
+
+asv_by_ind <- as.matrix(asv_by_ind)
+mode(asv_by_ind) <- "numeric"
+
+rownames(asv_by_ind) <- rownames(asv_tab)
+colnames(asv_by_ind) <- individuals
+
+#asv_by_ind <- asv_by_ind[rowSums(asv_by_ind) > 0, , drop = FALSE]
+
+individual_coords <- meta[
+  !duplicated(meta[[individual_col]]),
+  c(individual_col, lon_col, lat_col),
+  drop = FALSE
+]
+
+individual_coords <- individual_coords[
+  complete.cases(individual_coords[, c(lon_col, lat_col)]),
+  ,
+  drop = FALSE
+]
+
+rownames(individual_coords) <- individual_coords[[individual_col]]
+
+common_inds <- intersect(colnames(asv_by_ind), rownames(individual_coords))
+
+#asv_by_ind <- asv_by_ind[, common_inds, drop = FALSE]
+individual_coords <- individual_coords[common_inds, , drop = FALSE]
+
+ind_coords_mat <- as.matrix(individual_coords[, c(lon_col, lat_col)])
+
+ind_geo_dist <- geosphere::distm(
+  ind_coords_mat,
+  ind_coords_mat,
+  fun = geosphere::distHaversine
+)
+
+rownames(ind_geo_dist) <- rownames(individual_coords)
+colnames(ind_geo_dist) <- rownames(individual_coords)
+
+asvs <- rownames(asv_by_ind)
+
+asv_geo_dist <- matrix(
+  NA_real_,
+  nrow = length(asvs),
+  ncol = length(asvs),
+  dimnames = list(asvs, asvs)
+)
+
+summarize_distance <- switch(
+  summary_fun,
+  mean = mean,
+  min = min,
+  median = median
+)
+
+for (i in seq_along(asvs)) {
+  inds_i <- colnames(asv_by_ind)[asv_by_ind[i, ] > 0]
+
+  for (j in i:length(asvs)) {
+    inds_j <- colnames(asv_by_ind)[asv_by_ind[j, ] > 0]
+
+    pairwise_distances <- ind_geo_dist[inds_i, inds_j, drop = FALSE]
+
+    d <- summarize_distance(pairwise_distances, na.rm = TRUE)
+
+    asv_geo_dist[i, j] <- d
+    asv_geo_dist[j, i] <- d
+  }
+}
+
+diag(asv_geo_dist) <- 0
+
+if (output_units == "km") {
+  asv_geo_dist <- asv_geo_dist / 1000
+}
+
+# -----------------------------
+# Plot one graph per top species
+# -----------------------------
+
+tax_top10 <- as.data.frame(tax_table(ps_top10_species), check.names = FALSE)
+tax_top10$ASV <- rownames(tax_top10)
 
 plot_list <- list()
+diagnostic_df <- data.frame()
 
-for (g in genus_list) {
+for (g in top10_species[[species_col]]) {
 
-  ps_g <- subset_taxa(ps2, Genus == g)
+  species_asvs <- tax_top10$ASV[tax_top10[[species_col]] == g]
 
-  # 🚨 skip if no taxa
-  if (ntaxa(ps_g) == 0) next
+  species_asvs <- Reduce(
+    intersect,
+    list(
+      species_asvs,
+      rownames(phy_matrix),
+      rownames(asv_geo_dist)
+    )
+  )
 
-  # 🚨 skip if no tree
-  if (is.null(phy_tree(ps_g, errorIfNULL = FALSE))) next
+  n_pairwise <- ifelse(
+    length(species_asvs) >= 2,
+    choose(length(species_asvs), 2),
+    0
+  )
 
-  tree <- phy_tree(ps_g)
+  diagnostic_df <- rbind(
+    diagnostic_df,
+    data.frame(
+      species = g,
+      asvs_used = length(species_asvs),
+      pairwise_comparisons = n_pairwise
+    )
+  )
 
-  # sometimes pruning breaks tree validity
-  if (is.null(tree)) next
+  if (length(species_asvs) < 2) {
+    next
+  }
 
-  tree_plot <- ggtree(tree)
-  tree_plot <- revts(tree_plot)
+  phy_sub <- phy_matrix[species_asvs, species_asvs, drop = FALSE]
+  geo_sub <- asv_geo_dist[species_asvs, species_asvs, drop = FALSE]
 
-  tree_df <- psmelt(ps_g) %>%
-    select(OTU, Region) %>%
-    filter(!is.na(Region)) %>%
-    distinct()
+  lower_tri <- lower.tri(phy_sub)
 
-  tree_df$name <- TAXtab[match(tree_df$OTU, TAXtab$ASVname), "name"]
-  tree_df$label_name <- ifelse(!duplicated(tree_df$name), tree_df$name, NA)
+  plot_df <- data.frame(
+    ASV1 = rownames(phy_sub)[row(phy_sub)[lower_tri]],
+    ASV2 = colnames(phy_sub)[col(phy_sub)[lower_tri]],
+    phy_distance = phy_sub[lower_tri],
+    geo_distance = geo_sub[lower_tri]
+  ) %>%
+    filter(
+      !is.na(phy_distance),
+      !is.na(geo_distance),
+      is.finite(phy_distance),
+      is.finite(geo_distance)
+    )
 
-  p <- tree_plot %<+% tree_df +
-    
-    geom_tippoint(aes(color = Region),
-                  alpha = 0.6,
-                  size = 2) +
-    
-    geom_tiplab(
-      aes(label = label_name),
-      align = FALSE,
-      linetype = NULL,
-      size = 3,
-      offset = 0.002,
-      hjust = 0,
-      na.rm = TRUE
+  if (nrow(plot_df) == 0) {
+    next
+  }
+
+  p <- ggplot(plot_df, aes(x = geo_distance, y = phy_distance)) +
+    geom_point(
+      alpha = 0.35,
+      size = 1.1,
+      color = "darkorange"
     ) +
-    
-    scale_color_manual(values = east_west_colors) +
-    
-    ggtitle(g) +
-    
-    theme_tree2() +
-    
+    theme_classic() +
+    labs(
+      title = g,
+      x = "Geo distance (km)",
+      y = "Phylo distance"
+    ) +
     theme(
-      plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
-      legend.position = "none"
-    ) +
-    
-    expand_limits(x = max(tree_plot$data$x) + 0.02)
+      plot.title = element_text(hjust = 0.5, face = "italic")
+    )
+
+  if (nrow(plot_df) >= 3 && length(unique(plot_df$geo_distance)) >= 2) {
+    p <- p +
+      geom_smooth(
+        method = "lm",
+        se = TRUE,
+        color = "black",
+        fill = "gray70",
+        linewidth = 0.8
+      )
+  }
 
   plot_list[[g]] <- p
 }
 
-wrap_plots(plot_list, ncol = 3)
+print(diagnostic_df)
+
+combined_plot <- wrap_plots(plot_list, ncol = 2)
+
+combined_plot
+```
+
+asv phylo and geo matrix v2: rank them by number of ASVs/tips in the phylogeny
+```{r}
+# setting
+individual_col <- "labtracking"
+lat_col <- "decimalLatitude"
+lon_col <- "decimalLongitude"
+species_col <- "Species"
+summary_fun <- "mean"   # "mean", "min", or "median"
+output_units <- "km"    # "km" or "m"
+
+point_color <- lighten("grey65", 0.3)
+line_color <- "grey35"
+
+ambiguous_pattern <- paste(
+  c(
+    "uncultured",
+    "unidentified",
+    "metagenome",
+    "bacterium",
+    "organism",
+    "sp\\.",
+    "spp\\.",
+    "cf\\.",
+    "aff\\."
+  ),
+  collapse = "|"
+)
+
+# -----------------------------
+# Extract taxonomy and tree tips
+# -----------------------------
+
+tax_df <- as.data.frame(tax_table(ps_full), check.names = FALSE)
+tax_df$ASV <- rownames(tax_df)
+
+if (is.null(phy_tree(ps_full))) {
+  stop("ps_full does not contain a phylogenetic tree.")
+}
+
+tree_tips <- phy_tree(ps_full)$tip.label
+
+# -----------------------------
+# Keep only named species with ASVs present in the phylogeny
+# -----------------------------
+
+tax_named_phylo <- tax_df %>%
+  filter(
+    !is.na(.data[[species_col]]),
+    .data[[species_col]] != "",
+    !grepl(ambiguous_pattern, .data[[species_col]], ignore.case = TRUE),
+    ASV %in% tree_tips
+  )
+
+# -----------------------------
+# Rank species by number of ASVs/tips in the phylogeny
+# -----------------------------
+
+top10_species <- tax_named_phylo %>%
+  group_by(.data[[species_col]]) %>%
+  summarize(
+    n_tips = n_distinct(ASV),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(n_tips)) %>%
+  slice_head(n = 10)
+
+print(top10_species)
+
+# -----------------------------
+# Subset phyloseq object to ASVs from top 10 species
+# -----------------------------
+
+top10_asvs <- tax_named_phylo %>%
+  filter(.data[[species_col]] %in% top10_species[[species_col]]) %>%
+  pull(ASV)
+
+ps_top10_species <- prune_taxa(top10_asvs, ps_full)
+
+# -----------------------------
+# Remake phylogenetic distance matrix
+# -----------------------------
+
+phy_matrix <- cophenetic(phy_tree(ps_top10_species))
+
+# -----------------------------
+# Remake geographic ASV distance matrix
+# -----------------------------
+
+asv_tab <- as(otu_table(ps_top10_species), "matrix")
+
+if (!taxa_are_rows(ps_top10_species)) {
+  asv_tab <- t(asv_tab)
+}
+
+meta <- data.frame(sample_data(ps_top10_species), check.names = FALSE)
+
+needed_cols <- c(individual_col, lat_col, lon_col)
+missing_cols <- setdiff(needed_cols, colnames(meta))
+
+if (length(missing_cols) > 0) {
+  stop("Missing metadata columns: ", paste(missing_cols, collapse = ", "))
+}
+
+sample_ids <- colnames(asv_tab)
+
+if (!all(sample_ids %in% rownames(meta))) {
+  missing_samples <- setdiff(sample_ids, rownames(meta))
+  stop(
+    "Some OTU-table sample names are missing from sample_data rownames. Examples: ",
+    paste(head(missing_samples), collapse = ", ")
+  )
+}
+
+meta <- meta[sample_ids, , drop = FALSE]
+
+asv_pa_sample <- asv_tab > 0
+
+individuals <- unique(meta[[individual_col]])
+
+asv_by_ind <- sapply(individuals, function(ind) {
+  samples_for_ind <- rownames(meta)[meta[[individual_col]] == ind]
+  rowSums(asv_pa_sample[, samples_for_ind, drop = FALSE]) > 0
+})
+
+asv_by_ind <- as.matrix(asv_by_ind)
+mode(asv_by_ind) <- "numeric"
+
+rownames(asv_by_ind) <- rownames(asv_tab)
+colnames(asv_by_ind) <- individuals
+
+asv_by_ind <- asv_by_ind[rowSums(asv_by_ind) > 0, , drop = FALSE]
+
+individual_coords <- meta[
+  !duplicated(meta[[individual_col]]),
+  c(individual_col, lon_col, lat_col),
+  drop = FALSE
+]
+
+individual_coords <- individual_coords[
+  complete.cases(individual_coords[, c(lon_col, lat_col)]),
+  ,
+  drop = FALSE
+]
+
+rownames(individual_coords) <- individual_coords[[individual_col]]
+
+common_inds <- intersect(colnames(asv_by_ind), rownames(individual_coords))
+
+asv_by_ind <- asv_by_ind[, common_inds, drop = FALSE]
+individual_coords <- individual_coords[common_inds, , drop = FALSE]
+
+ind_coords_mat <- as.matrix(individual_coords[, c(lon_col, lat_col)])
+
+ind_geo_dist <- geosphere::distm(
+  ind_coords_mat,
+  ind_coords_mat,
+  fun = geosphere::distHaversine
+)
+
+rownames(ind_geo_dist) <- rownames(individual_coords)
+colnames(ind_geo_dist) <- rownames(individual_coords)
+
+asvs <- rownames(asv_by_ind)
+
+asv_geo_dist <- matrix(
+  NA_real_,
+  nrow = length(asvs),
+  ncol = length(asvs),
+  dimnames = list(asvs, asvs)
+)
+
+summarize_distance <- switch(
+  summary_fun,
+  mean = mean,
+  min = min,
+  median = median
+)
+
+for (i in seq_along(asvs)) {
+  inds_i <- colnames(asv_by_ind)[asv_by_ind[i, ] > 0]
+
+  for (j in seq(i, length(asvs))) {
+    inds_j <- colnames(asv_by_ind)[asv_by_ind[j, ] > 0]
+
+    pairwise_distances <- ind_geo_dist[inds_i, inds_j, drop = FALSE]
+
+    d <- summarize_distance(pairwise_distances, na.rm = TRUE)
+
+    asv_geo_dist[i, j] <- d
+    asv_geo_dist[j, i] <- d
+  }
+}
+
+diag(asv_geo_dist) <- 0
+
+if (output_units == "km") {
+  asv_geo_dist <- asv_geo_dist / 1000
+}
+
+# -----------------------------
+# Plot one graph per top species and run Mantel tests
+# -----------------------------
+
+tax_top10 <- as.data.frame(tax_table(ps_top10_species), check.names = FALSE)
+tax_top10$ASV <- rownames(tax_top10)
+
+plot_list <- list()
+diagnostic_df <- data.frame()
+mantel_results <- data.frame()
+
+for (g in top10_species[[species_col]]) {
+
+  species_asvs <- tax_top10$ASV[tax_top10[[species_col]] == g]
+
+  species_asvs <- Reduce(
+    intersect,
+    list(
+      species_asvs,
+      rownames(phy_matrix),
+      rownames(asv_geo_dist)
+    )
+  )
+
+  n_pairwise <- ifelse(
+    length(species_asvs) >= 2,
+    choose(length(species_asvs), 2),
+    0
+  )
+
+  diagnostic_df <- rbind(
+    diagnostic_df,
+    data.frame(
+      species = g,
+      tips_used = length(species_asvs),
+      pairwise_comparisons = n_pairwise
+    )
+  )
+
+  if (length(species_asvs) < 2) {
+    mantel_results <- rbind(
+      mantel_results,
+      data.frame(
+        species = g,
+        tips_used = length(species_asvs),
+        pairwise_comparisons = n_pairwise,
+        mantel_r = NA_real_,
+        mantel_p = NA_real_
+      )
+    )
+    next
+  }
+
+  phy_sub <- phy_matrix[species_asvs, species_asvs, drop = FALSE]
+  geo_sub <- asv_geo_dist[species_asvs, species_asvs, drop = FALSE]
+
+  lower_tri <- lower.tri(phy_sub)
+
+  plot_df <- data.frame(
+    ASV1 = rownames(phy_sub)[row(phy_sub)[lower_tri]],
+    ASV2 = colnames(phy_sub)[col(phy_sub)[lower_tri]],
+    phy_distance = phy_sub[lower_tri],
+    geo_distance = geo_sub[lower_tri]
+  ) %>%
+    filter(
+      !is.na(phy_distance),
+      !is.na(geo_distance),
+      is.finite(phy_distance),
+      is.finite(geo_distance)
+    )
+
+  if (nrow(plot_df) == 0) {
+    mantel_results <- rbind(
+      mantel_results,
+      data.frame(
+        species = g,
+        tips_used = length(species_asvs),
+        pairwise_comparisons = n_pairwise,
+        mantel_r = NA_real_,
+        mantel_p = NA_real_
+      )
+    )
+    next
+  }
+
+  if (length(species_asvs) >= 3) {
+    mantel_out <- vegan::mantel(
+      as.dist(phy_sub),
+      as.dist(geo_sub),
+      method = "spearman",
+      permutations = 999
+    )
+
+    mantel_results <- rbind(
+      mantel_results,
+      data.frame(
+        species = g,
+        tips_used = length(species_asvs),
+        pairwise_comparisons = n_pairwise,
+        mantel_r = unname(mantel_out$statistic),
+        mantel_p = mantel_out$signif
+      )
+    )
+  } else {
+    mantel_results <- rbind(
+      mantel_results,
+      data.frame(
+        species = g,
+        tips_used = length(species_asvs),
+        pairwise_comparisons = n_pairwise,
+        mantel_r = NA_real_,
+        mantel_p = NA_real_
+      )
+    )
+  }
+
+  p <- ggplot(plot_df, aes(x = geo_distance, y = phy_distance)) +
+    geom_point(
+      shape = 21,
+      fill = point_color,
+      color = "black",
+      alpha = 0.45,
+      size = 1.4,
+      stroke = 0.2
+    ) +
+    theme_classic() +
+    labs(
+      title = g,
+      x = "Geo distance (km)",
+      y = "Phylo distance"
+    ) +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "italic")
+    )
+
+  if (nrow(plot_df) >= 3 && length(unique(plot_df$geo_distance)) >= 2) {
+    p <- p +
+      geom_smooth(
+        method = "lm",
+        se = TRUE,
+        color = line_color,
+        fill = "grey80",
+        linewidth = 1,
+        alpha = 0.25
+      )
+  }
+
+  plot_list[[g]] <- p
+}
+
+print(diagnostic_df)
+
+mantel_results <- mantel_results %>%
+  arrange(mantel_p)
+
+print(mantel_results)
+
+combined_plot <- wrap_plots(plot_list, ncol = 2)
+
+combined_plot
+
+ggsave(
+  filename = "top10_species_geo_phylo_multiplot.pdf",
+  plot = combined_plot,
+  width = 12,
+  height = 16,
+  units = "in"
+)
+
+# Example: view one species plot
+plot_list$Lactobacillus_reuteri
+```
+
+asv phylo and geo matrix v3: groups from the symbiont phylogeny
+```{r}
+base_colors <- c(
+  "within east" = "#5ab4ac",
+  "within west" = "#d8b365",
+  "between regions (east vs west)" = "#D85F64"
+)
+
+line_colors <- darken(
+  base_colors,
+  0.3
+)
+
+# -----------------------------
+# Get symbiont tree
+# -----------------------------
+
+symbiont_tree <- phy_tree(ps_full)
+
+if (is.null(symbiont_tree)) {
+  stop("ps_full does not contain a phylogenetic tree.")
+}
+
+# -----------------------------
+# Define clades using nodes in distal 1/10th of root depth
+# -----------------------------
+
+node_depths <- ape::node.depth.edgelength(symbiont_tree)
+
+n_tips <- length(symbiont_tree$tip.label)
+n_nodes <- symbiont_tree$Nnode
+
+tip_depths <- node_depths[1:n_tips]
+max_root_depth <- max(tip_depths, na.rm = TRUE)
+
+distal_cutoff <- 0.90 * max_root_depth
+
+internal_nodes <- (n_tips + 1):(n_tips + n_nodes)
+
+distal_nodes <- internal_nodes[node_depths[internal_nodes] >= distal_cutoff]
+
+if (length(distal_nodes) == 0) {
+  stop("No internal nodes found in the distal 1/10th of the tree depth.")
+}
+
+# -----------------------------
+# Rank distal clades by number of tips
+# -----------------------------
+
+clade_df <- data.frame()
+
+for (node in distal_nodes) {
+  clade_tips <- ape::extract.clade(symbiont_tree, node = node)$tip.label
+
+  clade_df <- rbind(
+    clade_df,
+    data.frame(
+      node = node,
+      n_tips = length(clade_tips)
+    )
+  )
+}
+
+clade_df <- clade_df %>%
+  arrange(desc(n_tips))
+
+# -----------------------------
+# Select top 10 largest non-overlapping distal clades
+# -----------------------------
+
+selected_clades <- list()
+selected_summary <- data.frame()
+used_tips <- character()
+
+for (node in clade_df$node) {
+  clade_tips <- ape::extract.clade(symbiont_tree, node = node)$tip.label
+
+  if (length(intersect(clade_tips, used_tips)) > 0) {
+    next
+  }
+
+  clade_name <- paste0("Clade_", length(selected_clades) + 1, "_Node_", node)
+
+  selected_clades[[clade_name]] <- clade_tips
+
+  selected_summary <- rbind(
+    selected_summary,
+    data.frame(
+      clade = clade_name,
+      node = node,
+      n_tips = length(clade_tips)
+    )
+  )
+
+  used_tips <- c(used_tips, clade_tips)
+
+  if (length(selected_clades) == 10) {
+    break
+  }
+}
+
+print(selected_summary)
+
+if (length(selected_clades) == 0) {
+  stop("No non-overlapping clades were selected.")
+}
+
+# -----------------------------
+# Subset phyloseq object to ASVs in top 10 clades
+# -----------------------------
+
+top10_clade_asvs <- unique(unlist(selected_clades))
+top10_clade_asvs <- intersect(top10_clade_asvs, taxa_names(ps_full))
+
+ps_top10_clades <- prune_taxa(top10_clade_asvs, ps_full)
+
+# -----------------------------
+# Remake phylogenetic distance matrix
+# -----------------------------
+
+phy_matrix <- cophenetic(phy_tree(ps_top10_clades))
+
+# -----------------------------
+# Remake geographic ASV distance matrix
+# -----------------------------
+
+asv_tab <- as(otu_table(ps_top10_clades), "matrix")
+
+if (!taxa_are_rows(ps_top10_clades)) {
+  asv_tab <- t(asv_tab)
+}
+
+meta <- data.frame(sample_data(ps_top10_clades), check.names = FALSE)
+
+needed_cols <- c(individual_col, lat_col, lon_col, region_col)
+missing_cols <- setdiff(needed_cols, colnames(meta))
+
+if (length(missing_cols) > 0) {
+  stop("Missing metadata columns: ", paste(missing_cols, collapse = ", "))
+}
+
+sample_ids <- colnames(asv_tab)
+
+if (!all(sample_ids %in% rownames(meta))) {
+  missing_samples <- setdiff(sample_ids, rownames(meta))
+  stop(
+    "Some OTU-table sample names are missing from sample_data rownames. Examples: ",
+    paste(head(missing_samples), collapse = ", ")
+  )
+}
+
+meta <- meta[sample_ids, , drop = FALSE]
+
+asv_pa_sample <- asv_tab > 0
+
+individuals <- unique(meta[[individual_col]])
+
+asv_by_ind <- sapply(individuals, function(ind) {
+  samples_for_ind <- rownames(meta)[meta[[individual_col]] == ind]
+  rowSums(asv_pa_sample[, samples_for_ind, drop = FALSE]) > 0
+})
+
+asv_by_ind <- as.matrix(asv_by_ind)
+mode(asv_by_ind) <- "numeric"
+
+rownames(asv_by_ind) <- rownames(asv_tab)
+colnames(asv_by_ind) <- individuals
+
+asv_by_ind <- asv_by_ind[rowSums(asv_by_ind) > 0, , drop = FALSE]
+
+individual_coords <- meta[
+  !duplicated(meta[[individual_col]]),
+  c(individual_col, lon_col, lat_col, region_col),
+  drop = FALSE
+]
+
+individual_coords <- individual_coords[
+  complete.cases(individual_coords[, c(lon_col, lat_col, region_col)]),
+  ,
+  drop = FALSE
+]
+
+rownames(individual_coords) <- individual_coords[[individual_col]]
+
+common_inds <- intersect(colnames(asv_by_ind), rownames(individual_coords))
+
+asv_by_ind <- asv_by_ind[, common_inds, drop = FALSE]
+individual_coords <- individual_coords[common_inds, , drop = FALSE]
+
+ind_coords_mat <- as.matrix(individual_coords[, c(lon_col, lat_col)])
+
+ind_geo_dist <- geosphere::distm(
+  ind_coords_mat,
+  ind_coords_mat,
+  fun = geosphere::distHaversine
+)
+
+rownames(ind_geo_dist) <- rownames(individual_coords)
+colnames(ind_geo_dist) <- rownames(individual_coords)
+
+asvs <- rownames(asv_by_ind)
+
+asv_geo_dist <- matrix(
+  NA_real_,
+  nrow = length(asvs),
+  ncol = length(asvs),
+  dimnames = list(asvs, asvs)
+)
+
+summarize_distance <- switch(
+  summary_fun,
+  mean = mean,
+  min = min,
+  median = median
+)
+
+for (i in seq_along(asvs)) {
+  inds_i <- colnames(asv_by_ind)[asv_by_ind[i, ] > 0]
+
+  for (j in i:length(asvs)) {
+    inds_j <- colnames(asv_by_ind)[asv_by_ind[j, ] > 0]
+
+    pairwise_distances <- ind_geo_dist[inds_i, inds_j, drop = FALSE]
+
+    d <- summarize_distance(pairwise_distances, na.rm = TRUE)
+
+    asv_geo_dist[i, j] <- d
+    asv_geo_dist[j, i] <- d
+  }
+}
+
+diag(asv_geo_dist) <- 0
+
+if (output_units == "km") {
+  asv_geo_dist <- asv_geo_dist / 1000
+}
+
+# -----------------------------
+# Assign each ASV to east/west region categories
+# -----------------------------
+
+individual_region <- individual_coords[, c(individual_col, region_col), drop = FALSE]
+
+rownames(individual_region) <- individual_region[[individual_col]]
+
+asv_to_regions <- lapply(rownames(asv_by_ind), function(asv) {
+  inds_present <- colnames(asv_by_ind)[asv_by_ind[asv, ] > 0]
+  regions_present <- unique(individual_region[inds_present, region_col])
+  regions_present <- regions_present[!is.na(regions_present)]
+  tolower(regions_present)
+})
+
+names(asv_to_regions) <- rownames(asv_by_ind)
+
+# -----------------------------
+# Plot one graph per selected clade
+# -----------------------------
+
+plot_list <- list()
+diagnostic_df <- data.frame()
+
+for (clade_name in names(selected_clades)) {
+  clade_asvs <- selected_clades[[clade_name]]
+
+  clade_asvs <- Reduce(
+    intersect,
+    list(
+      clade_asvs,
+      rownames(phy_matrix),
+      rownames(asv_geo_dist)
+    )
+  )
+
+  n_pairwise <- ifelse(
+    length(clade_asvs) >= 2,
+    choose(length(clade_asvs), 2),
+    0
+  )
+
+  diagnostic_df <- rbind(
+    diagnostic_df,
+    data.frame(
+      clade = clade_name,
+      asvs_used = length(clade_asvs),
+      pairwise_comparisons = n_pairwise
+    )
+  )
+
+  if (length(clade_asvs) < 2) {
+    next
+  }
+
+  phy_sub <- phy_matrix[clade_asvs, clade_asvs, drop = FALSE]
+  geo_sub <- asv_geo_dist[clade_asvs, clade_asvs, drop = FALSE]
+
+  lower_tri <- lower.tri(phy_sub)
+
+  plot_df <- data.frame(
+    ASV1 = rownames(phy_sub)[row(phy_sub)[lower_tri]],
+    ASV2 = colnames(phy_sub)[col(phy_sub)[lower_tri]],
+    phy_distance = phy_sub[lower_tri],
+    geo_distance = geo_sub[lower_tri]
+  ) %>%
+    filter(
+      !is.na(phy_distance),
+      !is.na(geo_distance),
+      is.finite(phy_distance),
+      is.finite(geo_distance)
+    )
+
+  if (nrow(plot_df) == 0) {
+    next
+  }
+
+  plot_df$region_pair <- mapply(function(a1, a2) {
+    regions_1 <- asv_to_regions[[a1]]
+    regions_2 <- asv_to_regions[[a2]]
+
+    combined_regions <- unique(c(regions_1, regions_2))
+    combined_regions <- combined_regions[!is.na(combined_regions)]
+
+    if (length(combined_regions) == 1 && combined_regions == "east") {
+      "within east"
+    } else if (length(combined_regions) == 1 && combined_regions == "west") {
+      "within west"
+    } else {
+      "between regions (east vs west)"
+    }
+  }, plot_df$ASV1, plot_df$ASV2)
+
+  plot_df$region_pair <- factor(
+    plot_df$region_pair,
+    levels = c(
+      "within east",
+      "within west",
+      "between regions (east vs west)"
+    )
+  )
+
+  p <- ggplot(plot_df, aes(x = geo_distance, y = phy_distance)) +
+    geom_point(
+      aes(fill = region_pair),
+      shape = 21,
+      color = "black",
+      alpha = 0.45,
+      size = 1.4,
+      stroke = 0.15
+    ) +
+    scale_fill_manual(
+      values = base_colors,
+      name = "Region comparison"
+    ) +
+    theme_classic() +
+    labs(
+      title = clade_name,
+      x = "Geographic distance between ASVs (km)",
+      y = "Phylogenetic distance between ASVs"
+    ) +
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      legend.position = "right"
+    )
+
+  if (nrow(plot_df) >= 3 && length(unique(plot_df$geo_distance)) >= 2) {
+    p <- p +
+      geom_smooth(
+        aes(color = region_pair, fill = region_pair),
+        method = "lm",
+        se = TRUE,
+        linewidth = 1,
+        alpha = 0.18
+      ) +
+      scale_color_manual(
+        values = line_colors,
+        name = "Region comparison"
+      )
+  }
+
+  plot_list[[clade_name]] <- p
+}
+
+print(diagnostic_df)
+
+combined_plot <- wrap_plots(plot_list, ncol = 2)
+
+combined_plot
 ```
 
 ASV phylo signal 
 ```{r}
+library(phylosignal)
 # =========================================================
 # EXTRACT TREE
 # =========================================================
@@ -546,7 +2803,6 @@ trait_df <- trait_df %>%
 #  0 → mixed
 # +1 → fully East
 
-
 # =========================================================
 # ALIGN TO TREE
 # =========================================================
@@ -576,6 +2832,7 @@ tree2 <- drop.tip(tree, tree$tip.label[!keep])
 # choose ONE trait for phylosig (must be numeric vector)
 trait_vector <- as.numeric(trait_df$region_bias)
 
+
 # assign names = ASV labels
 names(trait_vector) <- trait_df$OTU
 
@@ -594,16 +2851,16 @@ tree2$edge.length <- tree2$edge.length + 1e-6
 # PHYLOGENETIC SIGNAL — BLOMBERG’S K
 # =========================================================
 
-K_result <- phylosig(
-  tree2,
-  trait_vector,
-  method = "K",
-  test = TRUE,
-  nsim = 1000
-)
+#K_result <- phylosig(
+#  tree2,
+#  trait_vector,
+#  method = "K",
+#  test = TRUE,
+#  nsim = 1000
+#)
 
-print(K_result)
-plot(K_result)
+#print(K_result)
+#plot(K_result)
 
 # =========================================================
 # PHYLOGENETIC SIGNAL — PAGEL’S LAMBDA
@@ -616,11 +2873,87 @@ lambda_result <- phylosig(
   test = TRUE
 )
 
+library(ape)
+library(nlme)
+
+dat <- data.frame(
+  species = names(trait_vector),
+  trait = as.numeric(trait_vector)
+)
+
+rownames(dat) <- dat$species
+
+dat <- dat[tree2$tip.label, ]
+
+ll_fun <- function(lambda) {
+  fit <- gls(
+    trait ~ 1,
+    data = dat,
+    correlation = corPagel(
+      value = lambda,
+      phy = tree2,
+      fixed = TRUE,
+      form = ~ species
+    ),
+    method = "ML"
+  )
+
+  as.numeric(logLik(fit))
+}
+
+lambda_hat <- lambda_result$lambda
+ll_max <- ll_fun(lambda_hat)
+
+cutoff <- ll_max - qchisq(0.95, df = 1) / 2
+
+root_fun <- function(lambda) {
+  ll_fun(lambda) - cutoff
+}
+
+lower_95 <- if (root_fun(0) >= 0) {
+  0
+} else {
+  uniroot(root_fun, interval = c(0, lambda_hat))$root
+}
+
+upper_95 <- if (root_fun(1) >= 0) {
+  1
+} else {
+  uniroot(root_fun, interval = c(lambda_hat, 1))$root
+}
+
+lambda_ci <- c(
+  lambda = lambda_hat,
+  lower_95 = lower_95,
+  upper_95 = upper_95
+)
+
+print(lambda_ci)
+
 print(lambda_result)
 plot(lambda_result)
 
-tree2$phy <- multi2di(tree2)
+#tree2$phy <- multi2di(tree2)
 
+#dev.off()
+
+#dat <- list()
+#dat$region_bias <- trait_df$region_bias
+#dat <- as.data.frame(dat)
+
+#p4d <- phylo4d(tree2, dat)
+#barplot.phylo4d(p4d, tree.type = "phylo", tree.ladderize = TRUE)
+
+#carni.lipa <- lipaMoran(p4d)
+#carni.lipa.p4d <- lipaMoran(p4d, as.p4d = TRUE)
+
+#barplot.phylo4d(p4d, bar.col=(carni.lipa$p.value < 0.05) + 1, center = FALSE , scale = FALSE)
+#barplot.phylo4d(carni.lipa.p4d, bar.col = (carni.lipa$p.value < 0.05) + 1, center = FALSE, scale = FALSE)
+
+#phyloSignal(p4d = p4d, method = "Lambda")
+#phylosim <- phyloSim(tree = tree2, method = "Lambda", nsim = 100, reps = 9)
+#plot(phylosim, stacked.methods = FALSE, quantiles = c(0.05, 0.95))
+#plot.phylosim(phylosim, what = "pval", stacked.methods = TRUE)
 ```
 
 dist decay by gen
@@ -1171,7 +3504,7 @@ physeq <- qza_to_phyloseq(
   features  = "data/microbiome/rarefied-table.qza",
   tree      = "data/microbiome/rooted-tree.qza",
   taxonomy  = "data/microbiome/taxonomy.qza",
-  metadata  = "MicrobiotaProcess_sample_data.tsv"
+  metadata  = "MicrobiotaProcess_sample_data2.tsv"
 )
 
 #---------------------------
@@ -1356,11 +3689,12 @@ points_sf <- st_as_sf(p1)
 
 #raster data from https://www.mrlc.gov/data
 raster_obj <- rast("Annual_NLCD_LndCov_2020_CU_C1V1/Annual_NLCD_LndCov_2020_CU_C1V1.tif")
-
+tree_raster <- rast("science_tcc_conus_2025_v2025-6_wgs84/science_tcc_conus_wgs84_v2025-6_20250101_20251231.tif")
 #raster data from https://prism.oregonstate.edu/data/
 rain_raster <- rast("prism_ppt_us_30s_2020/prism_ppt_us_30s_2020.tif")
 mean_temp_raster <- rast("prism_tmean_us_30s_2020/prism_tmean_us_30s_2020.tif")
 
+plot(tree_raster)
 plot(raster_obj)
 plot(rain_raster)
 plot(mean_temp_raster)
@@ -1430,7 +3764,7 @@ unique(rownames(otu_sorted) == metadata_filtered_sorted$labtracking) # OK
 metadata_filtered_sorted$Richness.rar<-specnumber(otu_sorted) # Counts otu number
 metadata_filtered_sorted$Shannon.rar<-vegan::diversity(otu_sorted, index="shannon") ## calculate Shannon H
 
-wilcox.test(Shannon.rar ~ Region, data = metadata_filtered_sorted)
+kruskal.test(Shannon.rar ~ Region, data = metadata_filtered_sorted)
 
 min_richness <- min(metadata_filtered_sorted$Richness.rar)
 max_richness <- max(metadata_filtered_sorted$Richness.rar)
@@ -1445,7 +3779,9 @@ print(kruskal_richness)
 
 summary <- metadata_filtered_sorted %>%
   group_by(Region) %>%
-  summarise(mean_percent = mean(Richness.rar), .groups = "drop")
+  summarise(mean_percent = mean(Richness.rar),
+            sd_percent = sd(Richness.rar),
+           .groups = "drop") 
 
 print(summary)
 
@@ -1459,9 +3795,13 @@ a = ggplot(metadata_filtered_sorted, aes(x = Region, y = Richness.rar, fill = Re
 a
 ```
 
-Beta diversity 
+Beta diversity (nmds)
 ```{r}
 set.seed(12)
+
+#ps_bc_dist
+#ps_sor_dist
+
 bac.nmds<-metaMDS(ps_sor_dist, k=2, try=999)
 bac.nmds$stress #0.21
 stress= paste("stress = ", round(bac.nmds$stress, digits = 2))
@@ -1469,33 +3809,38 @@ stress= paste("stress = ", round(bac.nmds$stress, digits = 2))
 meta$Axis01<-bac.nmds$points[,1]
 meta$Axis02<-bac.nmds$points[,2]
 
-# install.packages("viridis") if needed
 bac_nmds <- ggplot(meta, aes(x = Axis01, y = Axis02)) +
-  geom_point(aes(color = stateProvince), size = 2, alpha = 0.8) +
-  stat_ellipse(aes(fill = stateProvince), geom = "polygon", alpha = 0.45, level = 0.68, show.legend = FALSE) +
-  scale_color_manual(values = state_colors) +
-  scale_fill_manual(values = state_colors) +
+  stat_ellipse(aes(fill = stateProvince), geom = "polygon", alpha = 0.45, level = 0.68) +
+  geom_point(aes(color = stateProvince), size = 2) +
+  scale_color_manual(values = state_colors, name = "State") +
+  scale_fill_manual(values =  state_colors, name = "State") +
   theme_classic() +
-  labs(x = "NMDS1", y = "NMDS2") +
-  ggtitle("Sørensen dissimilarity")
+  labs(x = "NMDS1", y = "NMDS2") 
+  #ggtitle("Sor dissimilarity")
 bac_nmds
 ```
 
 Bayesian Generalized (Non-)Linear Multivariate Multilevel Models
 ```{r}
 #### Create metadata -------------
-#geo_dist
-#ps_bc_dist
-#ps_sor_dist
+# geo_dist
+# ps_bc_dist
+# ps_sor_dist
 
-### =========================
-### 1. Melt distance matrices
-### =========================
+# =========================
+# 1. Melt distance matrices
+# =========================
 
 melted_BC <- melt(
   as.matrix(ps_bc_dist),
   varnames = c("Sample1", "Sample2"),
   value.name = "BC_Dissimilarity"
+)
+
+melted_SOR <- melt(
+  as.matrix(ps_sor_dist),
+  varnames = c("Sample1", "Sample2"),
+  value.name = "SOR_Dissimilarity"
 )
 
 melted_geo <- melt(
@@ -1504,81 +3849,145 @@ melted_geo <- melt(
   value.name = "geo_Distance"
 )
 
-### =========================
-### 2. SAFE merge
-### =========================
+
+# =========================
+# 2. SAFE merge
+# =========================
+
 melted_diffs <- left_join(
   melted_geo,
   melted_BC,
   by = c("Sample1", "Sample2")
-)
-
-### =========================
-### 3. Convert to similarity
-### =========================
-melted_diffs <- melted_diffs %>%
-  mutate(
-    BC_Similarity = 1 - BC_Dissimilarity
+) %>%
+  left_join(
+    melted_SOR,
+    by = c("Sample1", "Sample2")
   )
 
-### =========================
-### 4. Remove duplicates + self-comparisons
-### =========================
+
+# =========================
+# 3. Convert to similarity
+# =========================
+
+melted_diffs <- melted_diffs %>%
+  mutate(
+    BC_Similarity = 1 - BC_Dissimilarity,
+    SOR_Similarity = 1 - SOR_Dissimilarity
+  )
+
+
+# =========================
+# 4. Remove duplicates + self-comparisons
+# =========================
+
 melted_diffs <- melted_diffs %>%
   filter(Sample1 != Sample2) %>%
   mutate(
-    pair_min = pmin(as.character(Sample1), as.character(Sample2)),
-    pair_max = pmax(as.character(Sample1), as.character(Sample2))
+    pair_min = pmin(
+      as.character(Sample1),
+      as.character(Sample2)
+    ),
+    pair_max = pmax(
+      as.character(Sample1),
+      as.character(Sample2)
+    )
   ) %>%
-  distinct(pair_min, pair_max, .keep_all = TRUE) %>%
-  select(Sample1, Sample2, geo_Distance, BC_Similarity)
+  distinct(
+    pair_min,
+    pair_max,
+    .keep_all = TRUE
+  ) %>%
+  select(
+    Sample1,
+    Sample2,
+    geo_Distance,
+    BC_Similarity,
+    SOR_Similarity
+  )
 
-### =========================
-### 5. Add region metadata
-### =========================
-region_map <- setNames(meta$Region, meta$labtracking)
+
+# =========================
+# 5. Add region metadata
+# =========================
+
+region_map <- setNames(
+  meta$Region,
+  meta$labtracking
+)
 
 melted_diffs <- melted_diffs %>%
   mutate(
     region1 = region_map[Sample1],
     region2 = region_map[Sample2],
+
     compairson = case_when(
-      region1 == "east" & region2 == "east" ~ "within east",
-      region1 == "west" & region2 == "west" ~ "within west",
-      TRUE ~ "between regions (east vs west)"
+      region1 == "east" &
+        region2 == "east" ~
+        "within east",
+
+      region1 == "west" &
+        region2 == "west" ~
+        "within west",
+
+      TRUE ~
+        "between regions (east vs west)"
     ),
+
     same_region = region1 == region2
   )
 
-### =========================
-### 6. Scale distance
-### =========================
-range.use <- function(x, min.use, max.use) {
+
+# =========================
+# 6. Scale distance
+# =========================
+
+range.use <- function(
+    x,
+    min.use,
+    max.use
+) {
+
   (x - min(x, na.rm = TRUE)) /
-    (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)) *
-    (max.use - min.use) + min.use
+    (
+      max(x, na.rm = TRUE) -
+        min(x, na.rm = TRUE)
+    ) *
+    (max.use - min.use) +
+    min.use
 }
 
 melted_diffs <- melted_diffs %>%
   mutate(
-    dist_scaled = range.use(geo_Distance, 0, 1),
+    dist_scaled = range.use(
+      geo_Distance,
+      0,
+      1
+    ),
+
     dist_100 = geo_Distance / 100,
-    dist_z = as.numeric(scale(dist_100))
+
+    dist_z = as.numeric(
+      scale(dist_100)
+    )
   )
 
-### =========================
-### 7. Clean factor levels
-### =========================
+
+# =========================
+# 7. Clean factor levels
+# =========================
+
 melted_diffs$compairson <- factor(
   melted_diffs$compairson,
-  levels = c("within east", "within west", "between regions (east vs west)")
+  levels = c(
+    "within east",
+    "within west",
+    "between regions (east vs west)"
+  )
 )
 
-### =========================
-### 8. Colors 
-### =========================
-library(colorspace)
-library(ggnewscale)
+# =========================
+# 8. Colors
+# =========================
 
 base_colors <- c(
   "within east" = "#5ab4ac",
@@ -1586,42 +3995,189 @@ base_colors <- c(
   "between regions (east vs west)" = "#D85F64"
 )
 
-line_colors <- darken(base_colors, 0.3)
+line_colors <- c(
+  darken(
+    base_colors,
+    0.3
+  ),
+  "all" = "grey35"
+)
 
-### =========================
-### 9. Plot 
-### =========================
-p <- ggplot(melted_diffs, aes(x = geo_Distance, y = BC_Similarity)) +
 
-  # points
-  geom_point(aes(color = compairson), size = 2, alpha = 0.5) +
-  scale_color_manual(values = base_colors, guide = "none") +
+# =========================
+# 9. Common axis limits
+# =========================
 
-  ggnewscale::new_scale_color() +
+xlims <- range(
+  melted_diffs$geo_Distance,
+  na.rm = TRUE
+)
 
-  # group-specific lines
-  geom_smooth(
-    aes(color = compairson),
-    method = "lm",
-    se = FALSE,
-    linewidth = 1.2
+bc_ylims <- range(
+  melted_diffs$BC_Similarity,
+  na.rm = TRUE
+)
+
+sc_ylims <- range(
+  melted_diffs$SOR_Similarity,
+  na.rm = TRUE
+)
+
+
+# =========================
+# 10. Plotting function
+# =========================
+
+plot_decay <- function(
+    dat,
+    yvar,
+    ylab,
+    ylims
+) {
+
+  ggplot(
+    dat,
+    aes(
+      x = geo_Distance,
+      y = .data[[yvar]]
+    )
   ) +
-  scale_color_manual(values = line_colors, name = "Comparison") +
 
-  labs(
-    x = "Distance (km)",
-    y = "Bray-Curtis Similarity"
+    # points use base colors, no outlines
+    geom_point(
+      aes(color = compairson),
+      size = 2,
+      alpha = 0.5
+    ) +
+
+    scale_color_manual(
+      values = base_colors,
+      guide = "none",
+      drop = FALSE
+    ) +
+
+    ggnewscale::new_scale_color() +
+
+    # within east, within west, and between regression lines
+    geom_smooth(
+      aes(color = compairson),
+      method = "lm",
+      se = FALSE,
+      linewidth = 1.2
+    ) +
+
+    # all-data grey regression line on top
+    geom_smooth(
+      aes(color = "all"),
+      method = "lm",
+      se = FALSE,
+      linewidth = 1.4
+    ) +
+
+    scale_color_manual(
+      values = line_colors,
+      name = "Comparison",
+      breaks = c(
+        "within east",
+        "within west",
+        "between regions (east vs west)",
+        "all"
+      ),
+      labels = c(
+        "within east",
+        "within west",
+        "between regions (east vs west)",
+        "all"
+      )
+    ) +
+
+    coord_cartesian(
+      xlim = xlims,
+      ylim = ylims
+    ) +
+
+    labs(
+      x = "distance (km)",
+      y = ylab
+    ) +
+
+    theme_bw() +
+
+    theme(
+      axis.title = element_text(size = 13),
+      axis.text = element_text(size = 11),
+      legend.title = element_text(size = 12),
+      legend.text = element_text(size = 11),
+      panel.grid.minor = element_blank()
+    )
+}
+
+
+# =========================
+# 11. Make SC and BC plots
+# =========================
+
+p_sc <- plot_decay(
+  dat = melted_diffs,
+  yvar = "SOR_Similarity",
+  ylab = "Sørensen Similarity",
+  ylims = sc_ylims
+)
+
+p_bc <- plot_decay(
+  dat = melted_diffs,
+  yvar = "BC_Similarity",
+  ylab = "Bray-Curtis Similarity",
+  ylims = bc_ylims
+)
+
+
+# =========================
+# 12. Combine in one figure
+# BC = A, SC = B
+# =========================
+
+library(patchwork)
+
+combined_plot <- p_bc + p_sc +
+  plot_layout(
+    ncol = 2,
+    guides = "collect"
   ) +
-
-  theme_bw() +
+  plot_annotation(
+    tag_levels = "A"
+  ) &
   theme(
-    axis.title = element_text(size = 13),
-    axis.text  = element_text(size = 11),
-    legend.title = element_text(size = 12),
-    legend.text  = element_text(size = 11)
+    legend.position = "right"
   )
 
-print(p)
+combined_plot
+
+# =========================
+# Mantel:
+#    Geographic distance
+#    vs Bray-Curtis
+# =========================
+
+
+mantel_BC<-vegan::mantel(vegan::vegdist(bc_mat), vegan::vegdist(geo_mat),method = "spearman", permutations = 999, parallel = 8)
+
+# =========================
+# Mantel:
+#    Geographic distance
+#    vs Sørensen
+# =========================
+mantel_SOR<-vegan::mantel(vegan::vegdist(sor_mat), vegan::vegdist(geo_mat),method = "spearman", permutations = 999, parallel = 8)
+
+# =========================
+# Results
+# =========================
+
+mantel_BC$signif
+mantel_BC$statistic
+
+mantel_SOR$signif
+mantel_SOR$statistic
 
 ### =========================
 ### 10. Prepare for BRMS 
@@ -1633,22 +4189,22 @@ melted_diffs$BC_Similarity <- (melted_diffs$BC_Similarity * (n - 1) + 0.5) / n
 ### =========================
 ### 11. Model (FIXED)
 ### =========================
-library(brms)
+#library(brms)
 
-model <- brm(
-  BC_Similarity ~ 1 + dist_scaled * compairson +
-    (1 | mm(Sample1, Sample2)),
-  data = melted_diffs,
-  family = Beta(),
-  warmup = 2000,
-  iter = 6000,
-  chains = 4,
-  cores = 4,              # safer default; increase if stable
-  threads = threading(4),
-  control = list(adapt_delta = 0.95),
-  init = 0
-)
-summary(model)
+#model <- brm(
+#  BC_Similarity ~ 1 + dist_scaled * compairson +
+#    (1 | mm(Sample1, Sample2)),
+#  data = melted_diffs,
+#  family = Beta(),
+#  warmup = 2000,
+#  iter = 6000,
+#  chains = 4,
+#  cores = 4,              # safer default; increase if stable
+#  threads = threading(4),
+#  control = list(adapt_delta = 0.95),
+#  init = 0
+#)
+#summary(model)
 
 #Scale distance within region
 #Use || for random slopes
@@ -1697,8 +4253,7 @@ between_min <- between_range[1]
 between_max <- east_range[2]
 
 ### =========================
-### Keep only distances that fall
-### within the BETWEEN-region range
+### Keep only overlapping distances
 ### =========================
 
 overlap_df <- melted_diffs %>%
@@ -1707,39 +4262,51 @@ overlap_df <- melted_diffs %>%
     geo_Distance <= between_max
   )
 
+### =========================
+### Pairwise comparisons
+### =========================
+
+comparisons <- list(
+  c("within east", "within west"),
+  c("within east", "between regions (east vs west)"),
+  c("within west", "between regions (east vs west)")
+)
 
 ### =========================
-### Plot
+### Box plot
 ### =========================
 
 p_overlap <- ggplot(
   overlap_df,
-  aes(x = geo_Distance, y = BC_Similarity)
+  aes(x = compairson, y = BC_Similarity, fill = compairson)
 ) +
 
-  geom_point(
-    aes(color = compairson),
-    size = 2,
-    alpha = 0.5
-  ) +
-  scale_color_manual(values = base_colors, guide = "none") +
-  ggnewscale::new_scale_color() +
-
-  geom_smooth(
-    aes(color = compairson),
-    method = "lm",
-    se = FALSE,
-    linewidth = 1.2
+  geom_boxplot(
+    alpha = 0.7,
+    outlier.alpha = 0.4,
+    width = 0.7,
+    color = "black"
   ) +
 
-  scale_color_manual(values = line_colors, name = "Comparison") +
+  stat_compare_means(
+    comparisons = comparisons,
+    method = "wilcox.test",
+    method.args = list(alternative = "two.sided"),
+    label = "p.format"
+  ) +
+
+  scale_fill_manual(values = base_colors, name = "Comparison") +
 
   labs(
-    x = "Distance (km)",
-    y = "BC Similarity"
+    x = NULL,
+    y = "Sor Similarity"
   ) +
 
-  theme_bw()
+  theme_bw() +
+
+  theme(
+    axis.text.x = element_text(angle = 15, hjust = 1)
+  )
 
 print(p_overlap)
 ```
@@ -1757,23 +4324,41 @@ if (!taxa_are_rows(ps)) {
 
 # Bray-Curtis
 permanova_asv_bray <- adonis2(
-  t(ps_asv_otu) ~ Region + decimalLatitude + decimalLongitude, 
+  t(ps_asv_otu) ~ stateProvince + decimalLatitude + decimalLongitude,
   data = meta,
-  permutations = 99,
-  method = "bray"
-)
-
-# Sørensen (binary Bray-Curtis)
-permanova_asv_sor <- adonis2(
-  t(ps_asv_otu) ~ Region + decimalLatitude + decimalLongitude,
-  data = meta,
-  permutations = 99,
+  permutations = 999,
   method = "bray",
-  binary = TRUE
+  by = "terms"
 )
 
-permanova_asv_bray
-permanova_asv_sor
+# Bray-Curtis
+permanova_asv_bray <- adonis2(
+  t(ps_asv_otu) ~ Region + habitat + temp  + decimalLatitude + decimalLongitude,
+  data = meta,
+  permutations = 999,
+  method = "bray",
+  by = "terms"
+)
+
+# Sørensen
+permanova_asv_sor <- adonis2(
+  t(ps_asv_otu) ~ stateProvince + decimalLatitude + decimalLongitude,
+  data = meta,
+  permutations = 999,
+  method = "bray",
+  binary = TRUE,
+  by = "terms"
+)
+
+permanova_asv_sor <- adonis2(
+  t(ps_asv_otu) ~ Region + habitat + temp  + decimalLatitude + decimalLongitude,
+  data = meta,
+  permutations = 999,
+  method = "bray",
+  binary = TRUE,
+  by = "terms"
+)
+
 
 #========================================================
 # GENUS-LEVEL
@@ -1791,23 +4376,22 @@ if (!taxa_are_rows(ps_genus)) {
 
 # Bray-Curtis
 permanova_genus_bray <- adonis2(
-  t(genus_otu) ~ Region  + decimalLatitude + decimalLongitude,
+  t(genus_otu) ~ Region + habitat + temp  + decimalLatitude + decimalLongitude,
   data = meta,
-  permutations = 99,
-  method = "bray"
+  permutations = 999,
+  method = "bray",
+  by = "terms"
 )
 
 # Sørensen
 permanova_genus_sor <- adonis2(
-  t(genus_otu) ~ Region  + decimalLatitude + decimalLongitude,
+  t(genus_otu) ~ Region + habitat + temp  + decimalLatitude + decimalLongitude,
   data = meta,
-  permutations = 99,
+  permutations = 999,
   method = "bray",
-  binary = TRUE
+  binary = TRUE,
+  by = "terms"
 )
-
-permanova_genus_bray
-permanova_genus_sor
 
 #========================================================
 # SPECIES-LEVEL
@@ -1825,63 +4409,22 @@ if (!taxa_are_rows(ps_species)) {
 
 # Bray-Curtis
 permanova_species_bray <- adonis2(
-  t(species_otu) ~ Region  + decimalLatitude + decimalLongitude,
+  t(species_otu) ~ Region + habitat + temp  + decimalLatitude + decimalLongitude,
   data = meta,
-  permutations = 99,
-  method = "bray"
+  permutations = 999,
+  method = "bray",
+  by = "terms"
 )
 
 # Sørensen
 permanova_species_sor <- adonis2(
-  t(species_otu) ~ Region  + decimalLatitude + decimalLongitude,
+  t(species_otu) ~ Region + habitat + temp  + decimalLatitude + decimalLongitude,
   data = meta,
-  permutations = 99,
+  permutations = 999,
   method = "bray",
-  binary = TRUE
+  binary = TRUE,
+  by = "terms"
 )
-
-permanova_species_bray
-permanova_species_sor
-
-#========================================================
-# Combine PERMANOVA results into one table
-#========================================================
-
-extract_permanova <- function(model, level, metric) {
-  
-  out <- as.data.frame(model)
-  
-  data.frame(
-    Level      = level,
-    Metric     = metric,
-    R2         = out$R2[1],
-    F          = out$F[1],
-    P_value    = out$`Pr(>F)`[1]
-  )
-}
-
-permanova_results <- bind_rows(
-  
-  extract_permanova(permanova_asv_bray,     "ASV",     "Bray-Curtis"),
-  extract_permanova(permanova_asv_sor,      "ASV",     "Sorensen"),
-  
-  extract_permanova(permanova_species_bray, "Species", "Bray-Curtis"),
-  extract_permanova(permanova_species_sor,  "Species", "Sorensen"),
-  
-  extract_permanova(permanova_genus_bray,   "Genus",   "Bray-Curtis"),
-  extract_permanova(permanova_genus_sor,    "Genus",   "Sorensen")
-  
-)
-
-# round values for cleaner display
-permanova_results <- permanova_results %>%
-  mutate(
-    R2      = round(R2, 4),
-    F       = round(F, 4),
-    P_value = signif(P_value, 3)
-  )
-
-print(permanova_results)
 ```
 
 mantel tests
@@ -1901,6 +4444,18 @@ run_mantel <- function(dist1, dist2) {
   vegan::mantel(dist1, dist2, permutations = 9999, method = "spearman")
 }
 
+mantel_bc <- run_mantel(
+  as.dist(as.matrix(ps_bc_dist)), as.dist(as.matrix(geo_dist)))
+  
+mantel_bc$statistic
+mantel_bc$signif
+
+mantel_sor <- run_mantel(
+  as.dist(as.matrix(ps_sor_dist)), as.dist(as.matrix(geo_dist)))
+
+mantel_sor$statistic
+mantel_sor$signif
+  
 # =========================
 # 3. EAST
 # =========================
@@ -1948,10 +4503,15 @@ bc_vals <- bc_mat[cbind(pairs$Var1, pairs$Var2)][keep]
 sor_vals <- sor_mat[cbind(pairs$Var1, pairs$Var2)][keep]
 geo_vals <- geo_mat[cbind(pairs$Var1, pairs$Var2)][keep]
 
-between_bc<-mantel(as.dist(bc_vals), as.dist(geo_vals),method = "spearman", permutations = 999, parallel = getOption("mc.cores"))
+between_bc<-vegan::mantel(vegan::vegdist(bc_vals), vegan::vegdist(geo_vals),method = "spearman", permutations = 999, parallel = 8)
 
-between_sor<-mantel(as.dist(sor_vals), as.dist(geo_vals),method = "spearman", permutations = 999, parallel = getOption("mc.cores"))
+between_bc$statistic
+between_bc$signif
 
+between_sor<-vegan::mantel(vegdist(sor_vals), vegdist(geo_vals),method = "spearman", permutations = 999, parallel = 8)
+
+between_sor$statistic
+between_sor$signif
 # =========================
 # 6. RESULTS TABLE
 # =========================
@@ -2362,6 +4922,7 @@ p2 <- ggplot(df_no_zeros, aes(x = x, y = y)) +
 grid.arrange(p1, p2, ncol = 2)
 ```
 
+
 vignette used for code chunks below: https://bioconductor.org/packages/release/bioc/vignettes/MicrobiotaProcess/inst/doc//MicrobiotaProcess.html
 
 Rare Abundance curve
@@ -2450,223 +5011,277 @@ p3 <- mpse_samples_filtered %>% mp_plot_dist(.distmethod = bray, .group = Region
  p3 
 ```
 
-BC pcoa
+PCoAs
 ```{r}
-mpse_samples_filtered %<>% 
-    mp_cal_pcoa(.abundance=hellinger, distmethod="bray")
+make_pcoa_df <- function(ps, binary = FALSE) {
+  otu <- as(otu_table(ps), "matrix")
 
-#perform adonis or anosim to check whether it is significant to the dissimilarities of groups.
-mpse_samples_filtered %<>%
-     mp_adonis(.abundance=hellinger, .formula=~Region, distmethod="bray", permutations=9999, action="add")
+  if (taxa_are_rows(ps)) {
+    otu <- t(otu)
+  }
 
-mpse_samples_filtered$Region <- 
-  factor(
-    mpse_samples_filtered$Region,
-    levels = c("east", "west")
+  dist <- vegan::vegdist(otu, method = "bray", binary = binary)
+  pcoa_res <- cmdscale(dist, eig = TRUE, k = 2)
+
+  var_exp <- round(
+    100 * pcoa_res$eig / sum(pcoa_res$eig[pcoa_res$eig > 0]),
+    2
   )
 
-mpse_samples_filtered %>% mp_extract_internal_attr(name=adonis)
-
-p1 <- mpse_samples_filtered %>%
-        mp_plot_ord(
-          .ord = pcoa, 
-          .group = Region, 
-          .color = Region, 
-          .size = 3,
-          .alpha = 1,
-          ellipse = TRUE,
-          show.legend = F # don't display the legend of stat_ellipse
-        )+   # land-use colors (primary)
-  scale_color_manual(
-    name   = "Region",
-    values = east_west_colors
-  ) +
-  scale_fill_manual(
-    name   = "Region",
-    values = east_west_colors
-  ) 
-
-p1
-
-p1 <- p1 +
-  geom_point(
-    data = ~subset(., stateProvince == "California"),
-    inherit.aes = TRUE,
-    size = 4,
-    color = "#FF00FF"  # standout magenta
+  pcoa_df <- data.frame(
+    SampleID = rownames(pcoa_res$points),
+    PCo1 = -1 * pcoa_res$points[, 1],
+    PCo2 = pcoa_res$points[, 2]
   )
 
-p1
-```
+  meta <- data.frame(sample_data(ps))
+  meta$SampleID <- rownames(meta)
 
-SOR pcoa
-```{r}
-library(ggside)
-# -----------------------------
-# Sørensen distance
-# -----------------------------
+  pcoa_df <- dplyr::left_join(pcoa_df, meta, by = "SampleID")
 
-otu <- as(otu_table(ps), "matrix")
-
-if (taxa_are_rows(ps)) {
-  otu <- t(otu)
+  list(
+    data = pcoa_df,
+    var_exp = var_exp
+  )
 }
 
-# presence/absence
-otu.pa <- ifelse(otu > 0, 1, 0)
+make_temp_group <- function(x) {
+  x <- as.numeric(as.character(x))
+  breaks <- quantile(x, probs = c(0, 1 / 3, 2 / 3, 1), na.rm = TRUE)
 
-# Sørensen dissimilarity
-sor_dist <- vegdist(otu.pa, method = "bray", binary = TRUE)
+  cut(
+    x,
+    breaks = unique(breaks),
+    labels = c("Low", "Medium", "High")[seq_len(length(unique(breaks)) - 1)],
+    include.lowest = TRUE
+  )
+}
 
-# -----------------------------
-# PCoA
-# -----------------------------
+plot_pcoa_group <- function(pcoa_obj,
+                            group_var,
+                            title,
+                            colors,
+                            legend_title = group_var) {
+  pcoa_df <- pcoa_obj$data
+  var_exp <- pcoa_obj$var_exp
 
-pcoa_res <- cmdscale(sor_dist, eig = TRUE, k = 2)
+  pcoa_df$PlotGroup <- pcoa_df[[group_var]]
+  pcoa_df <- pcoa_df %>% dplyr::filter(!is.na(PlotGroup))
 
-# Percent variance explained
-var_exp <- round(
-  100 * pcoa_res$eig / sum(pcoa_res$eig[pcoa_res$eig > 0]),
-  2
-)
-
-# Dataframe
-pcoa_df <- data.frame(
-  SampleID = rownames(pcoa_res$points),
-  PCo1 = pcoa_res$points[,1],
-  PCo2 = pcoa_res$points[,2]
-)
-
-# Metadata
-meta <- data.frame(sample_data(ps))
-meta$SampleID <- rownames(meta)
-
-pcoa_df <- left_join(pcoa_df, meta, by = "SampleID")
-
-# Match ordering
-pcoa_df$Region <- factor(
-  pcoa_df$Region,
-  levels = c("east", "west")
-)
-
-# flip horizontally
-pcoa_df$PCo1 <- -1 * pcoa_df$PCo1
-
-# -----------------------------
-# Plot
-# -----------------------------
-
-p <- ggplot(pcoa_df, aes(PCo1, PCo2, color = Region, fill = Region)) +
-
-  geom_hline(yintercept = 0,
-             linetype = "dashed",
-             color = "grey45",
-             linewidth = 0.4) +
-
-  geom_vline(xintercept = 0,
-             linetype = "dashed",
-             color = "grey45",
-             linewidth = 0.4) +
-
-  stat_ellipse(
-    geom = "path",
-    linewidth = 0.4,
-    level = 0.80
+  ggplot(
+    pcoa_df,
+    aes(PCo1, PCo2, fill = PlotGroup, color = PlotGroup)
   ) +
-
-  geom_point(
-    size = 3,
-    alpha = 0.95,
-    stroke = 0.4,
-    show.legend = TRUE,
-    shape = 21,  # allows separate fill + outline
-    color = "grey45", 
-  ) +
-
-  geom_xsideboxplot(
-    aes(y = Region),
-    orientation = "y",
-    width = 0.6,
-    outlier.shape = 16,
-    outlier.size = 1.8,
-    fatten = 1,
-    color = "black",
-    linewidth = 0.7,
-    show.legend = FALSE
-  ) +
-
-  geom_ysideboxplot(
-    aes(x = Region),
-    orientation = "x",
-    width = 0.6,
-    outlier.shape = 16,
-    outlier.size = 1.8,
-    fatten = 1,
-    color = "black",
-    linewidth = 0.7,
-    show.legend = FALSE
-  ) +
-
-  scale_color_manual(values = east_west_colors) +
-  scale_fill_manual(values = east_west_colors) +
-
-labs(
-  x = paste0("PCo1 (", var_exp[1], "%)"),
-  y = paste0("PCo2 (", var_exp[2], "%)")
-)+
-
-  coord_cartesian(
-    xlim = c(-0.32, 0.28),
-    ylim = c(-0.33, 0.33)
-  ) +
-
-  theme_classic(base_size = 12) +
-
-  theme(
-    panel.border = element_rect(
+    geom_hline(
+      yintercept = 0,
+      linetype = "dashed",
       color = "grey45",
-      fill = NA,
-      linewidth = 0.8
-    ),
-
-    axis.line = element_blank(),
-
-    legend.position = "right",
-
-    legend.title = element_text(size = 11),
-    legend.text = element_text(size = 10),
-
-    axis.title = element_text(size = 11),
-    axis.text = element_text(size = 9),
-
-    ggside.panel.scale = 0.25,
-
-    ggside.axis.text = element_text(size = 8),
-    ggside.axis.ticks = element_blank(),
-
-    # angle right-side labels
-    ggside.axis.text.x = element_text(
-      angle = -45
-    ),
-
-    panel.grid = element_blank(),
-
-    plot.margin = margin(10, 10, 10, 10)
-  ) +
-
-  # make legend points
-  guides(
-    color = guide_legend(
-      override.aes = list(
-        shape = 16,
-        size = 4,
-        alpha = 1
+      linewidth = 0.4
+    ) +
+    geom_vline(
+      xintercept = 0,
+      linetype = "dashed",
+      color = "grey45",
+      linewidth = 0.4
+    ) +
+    stat_ellipse(
+      aes(group = PlotGroup),
+      geom = "polygon",
+      linewidth = 0.4,
+      level = 0.80,
+      alpha = 0.20
+    ) +
+    geom_point(
+      size = 3,
+      alpha = 0.95,
+      stroke = 0.4,
+      shape = 21
+    ) +
+    scale_fill_manual(values = colors, name = legend_title) +
+    scale_color_manual(values = colors, name = legend_title) +
+    labs(
+      x = paste0("PCo1 (", var_exp[1], "%)"),
+      y = paste0("PCo2 (", var_exp[2], "%)"),
+      title = title
+    ) +
+    theme_classic(base_size = 12) +
+    theme(
+      panel.border = element_rect(
+        color = "grey45",
+        fill = NA,
+        linewidth = 0.8
+      ),
+      axis.line = element_blank(),
+      legend.position = "right",
+      legend.title = element_text(size = 11),
+      legend.text = element_text(size = 10),
+      axis.title = element_text(size = 11),
+      axis.text = element_text(size = 9),
+      panel.grid = element_blank(),
+      plot.margin = margin(10, 10, 10, 10)
+    ) +
+    guides(
+      color = guide_legend(
+        override.aes = list(shape = 21, size = 4, alpha = 1)
+      ),
+      fill = guide_legend(
+        override.aes = list(shape = 21, size = 4, alpha = 1)
       )
     )
-  )
-p
-```
+}
 
+# -----------------------------
+# Build PCoA objects
+# -----------------------------
+
+bc_pcoa <- make_pcoa_df(ps, binary = FALSE)
+sc_pcoa <- make_pcoa_df(ps, binary = TRUE)
+
+# -----------------------------
+# Prepare grouping variables
+# -----------------------------
+
+bc_pcoa$data$Region <- factor(bc_pcoa$data$Region, levels = c("east", "west"))
+sc_pcoa$data$Region <- factor(sc_pcoa$data$Region, levels = c("east", "west"))
+
+bc_pcoa$data$TempGroup <- make_temp_group(bc_pcoa$data$temp)
+sc_pcoa$data$TempGroup <- make_temp_group(sc_pcoa$data$temp)
+
+bc_pcoa$data$TempGroup <- factor(
+  bc_pcoa$data$TempGroup,
+  levels = c("Low", "Medium", "High")
+)
+sc_pcoa$data$TempGroup <- factor(
+  sc_pcoa$data$TempGroup,
+  levels = c("Low", "Medium", "High")
+)
+
+temp_colors <- c(
+  "Low" = "#4575B4",
+  "Medium" = "orange",
+  "High" = "#D73027"
+)
+
+# -----------------------------
+# Bray-Curtis PCoA plots
+# -----------------------------
+
+bc_habitat <- plot_pcoa_group(
+  bc_pcoa,
+  group_var = "habitat",
+  title = NULL,
+  colors = habitat_colors,
+  legend_title = "Habitat"
+)
+
+bc_temp <- plot_pcoa_group(
+  bc_pcoa,
+  group_var = "TempGroup",
+  title = NULL,
+  colors = temp_colors,
+  legend_title = "Mean Annual Temperature"
+)
+
+bc_region <- plot_pcoa_group(
+  bc_pcoa,
+  group_var = "Region",
+  title = NULL,
+  colors = east_west_colors,
+  legend_title = "Region"
+)
+
+# -----------------------------
+# Sorensen PCoA plots
+# -----------------------------
+
+sc_habitat <- plot_pcoa_group(
+  sc_pcoa,
+  group_var = "habitat",
+  title = NULL,
+  colors = habitat_colors,
+  legend_title = "Habitat"
+)
+
+sc_temp <- plot_pcoa_group(
+  sc_pcoa,
+  group_var = "TempGroup",
+  title = NULL,
+  colors = temp_colors,
+  legend_title = "Mean Annual Temperature"
+)
+
+sc_region <- plot_pcoa_group(
+  sc_pcoa,
+  group_var = "Region",
+  title = NULL,
+  colors = east_west_colors,
+  legend_title = "Region"
+)
+
+# -----------------------------
+# One combined figure
+# -----------------------------
+
+blank_header <- ggplot() + theme_void()
+
+bc_header <- ggplot() +
+  labs(title = "Bray-Curtis") +
+  theme_void() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 13))
+
+sc_header <- ggplot() +
+  labs(title = "Sorensen") +
+  theme_void() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 13))
+
+row_label <- function(label) {
+  ggplot() +
+    annotate(
+      "text",
+      x = 0.5,
+      y = 0.5,
+      label = label,
+      angle = 90,
+      fontface = "bold",
+      size = 4
+    ) +
+    xlim(0, 1) +
+    ylim(0, 1) +
+    theme_void()
+}
+
+habitat_label <- row_label("Habitat")
+temp_label <- row_label("Temperature")
+region_label <- row_label("Region")
+
+pcoa_figure <- (
+  blank_header + bc_header + sc_header +
+    habitat_label + (bc_habitat + labs(tag = "A")) + (sc_habitat + labs(tag = "B")) +
+    temp_label + (bc_temp + labs(tag = "C")) + (sc_temp + labs(tag = "D")) +
+    region_label + (bc_region + labs(tag = "E")) + (sc_region + labs(tag = "F"))
+) +
+  patchwork::plot_layout(
+    ncol = 3,
+    widths = c(0.08, 1, 1),
+    heights = c(0.08, 1, 1, 1),
+    guides = "collect"
+  ) &
+  theme(
+    legend.position = "right",
+    plot.tag = element_text(face = "bold", size = 14)
+  )
+
+pcoa_figure
+
+# Optional save:
+ ggsave(
+   "pcoa_bc_sc_figure.pdf",
+   pcoa_figure,
+   width = 11,
+   height = 12,
+   dpi = 500
+)
+```
 
 #### Plot the tanglegram with the expanded tree --------------------------------
 note: this phylosymbosis
