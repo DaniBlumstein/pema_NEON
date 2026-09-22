@@ -2381,6 +2381,435 @@ ggsave(
 plot_list$Lactobacillus_reuteri
 ```
 
+asv phylo and geo matrix v2: colored by region 
+```{r}
+# -----------------------------
+# Starting object and settings
+# -----------------------------
+
+individual_col <- "labtracking"
+lat_col <- "decimalLatitude"
+lon_col <- "decimalLongitude"
+species_col <- "Species"
+region_col <- "Region"
+
+summary_fun <- "mean"   # "mean", "min", or "median"
+output_units <- "km"    # "km" or "m"
+
+base_colors <- c(
+  "within east" = "#5ab4ac",
+  "within west" = "#d8b365",
+  "between regions (east vs west)" = "#D85F64"
+)
+
+line_color <- "grey35"
+
+ambiguous_pattern <- paste(
+  c(
+    "uncultured",
+    "unidentified",
+    "metagenome",
+    "bacterium",
+    "organism",
+    "sp\\.",
+    "spp\\.",
+    "cf\\.",
+    "aff\\."
+  ),
+  collapse = "|"
+)
+
+# -----------------------------
+# Extract taxonomy and tree tips
+# -----------------------------
+
+tax_df <- as.data.frame(tax_table(ps_full), check.names = FALSE)
+tax_df$ASV <- rownames(tax_df)
+
+if (is.null(phy_tree(ps_full))) {
+  stop("ps_full does not contain a phylogenetic tree.")
+}
+
+tree_tips <- phy_tree(ps_full)$tip.label
+
+# -----------------------------
+# Keep only named species with ASVs present in the phylogeny
+# -----------------------------
+
+tax_named_phylo <- tax_df %>%
+  filter(
+    !is.na(.data[[species_col]]),
+    .data[[species_col]] != "",
+    !grepl(ambiguous_pattern, .data[[species_col]], ignore.case = TRUE),
+    ASV %in% tree_tips
+  )
+
+# -----------------------------
+# Rank species by number of ASVs/tips in the phylogeny
+# -----------------------------
+
+top10_species <- tax_named_phylo %>%
+  group_by(.data[[species_col]]) %>%
+  summarize(
+    n_tips = n_distinct(ASV),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(n_tips)) %>%
+  slice_head(n = 10)
+
+print(top10_species)
+
+# -----------------------------
+# Subset phyloseq object to ASVs from top 10 species
+# -----------------------------
+
+top10_asvs <- tax_named_phylo %>%
+  filter(.data[[species_col]] %in% top10_species[[species_col]]) %>%
+  pull(ASV)
+
+ps_top10_species <- prune_taxa(top10_asvs, ps_full)
+
+# -----------------------------
+# Remake phylogenetic distance matrix
+# -----------------------------
+
+phy_matrix <- cophenetic(phy_tree(ps_top10_species))
+
+# -----------------------------
+# Remake geographic ASV distance matrix
+# -----------------------------
+
+asv_tab <- as(otu_table(ps_top10_species), "matrix")
+
+if (!taxa_are_rows(ps_top10_species)) {
+  asv_tab <- t(asv_tab)
+}
+
+meta <- data.frame(sample_data(ps_top10_species), check.names = FALSE)
+
+needed_cols <- c(individual_col, lat_col, lon_col, region_col)
+missing_cols <- setdiff(needed_cols, colnames(meta))
+
+if (length(missing_cols) > 0) {
+  stop("Missing metadata columns: ", paste(missing_cols, collapse = ", "))
+}
+
+sample_ids <- colnames(asv_tab)
+
+if (!all(sample_ids %in% rownames(meta))) {
+  missing_samples <- setdiff(sample_ids, rownames(meta))
+  stop(
+    "Some OTU-table sample names are missing from sample_data rownames. Examples: ",
+    paste(head(missing_samples), collapse = ", ")
+  )
+}
+
+meta <- meta[sample_ids, , drop = FALSE]
+
+asv_pa_sample <- asv_tab > 0
+
+individuals <- unique(meta[[individual_col]])
+
+asv_by_ind <- sapply(individuals, function(ind) {
+  samples_for_ind <- rownames(meta)[meta[[individual_col]] == ind]
+  rowSums(asv_pa_sample[, samples_for_ind, drop = FALSE]) > 0
+})
+
+asv_by_ind <- as.matrix(asv_by_ind)
+mode(asv_by_ind) <- "numeric"
+
+rownames(asv_by_ind) <- rownames(asv_tab)
+colnames(asv_by_ind) <- individuals
+
+asv_by_ind <- asv_by_ind[rowSums(asv_by_ind) > 0, , drop = FALSE]
+
+individual_coords <- meta[
+  !duplicated(meta[[individual_col]]),
+  c(individual_col, lon_col, lat_col, region_col),
+  drop = FALSE
+]
+
+individual_coords <- individual_coords[
+  complete.cases(individual_coords[, c(lon_col, lat_col, region_col)]),
+  ,
+  drop = FALSE
+]
+
+rownames(individual_coords) <- individual_coords[[individual_col]]
+
+common_inds <- intersect(colnames(asv_by_ind), rownames(individual_coords))
+
+asv_by_ind <- asv_by_ind[, common_inds, drop = FALSE]
+individual_coords <- individual_coords[common_inds, , drop = FALSE]
+
+ind_coords_mat <- as.matrix(individual_coords[, c(lon_col, lat_col)])
+
+ind_geo_dist <- geosphere::distm(
+  ind_coords_mat,
+  ind_coords_mat,
+  fun = geosphere::distHaversine
+)
+
+rownames(ind_geo_dist) <- rownames(individual_coords)
+colnames(ind_geo_dist) <- rownames(individual_coords)
+
+asvs <- rownames(asv_by_ind)
+
+asv_geo_dist <- matrix(
+  NA_real_,
+  nrow = length(asvs),
+  ncol = length(asvs),
+  dimnames = list(asvs, asvs)
+)
+
+summarize_distance <- switch(
+  summary_fun,
+  mean = mean,
+  min = min,
+  median = median
+)
+
+for (i in seq_along(asvs)) {
+  inds_i <- colnames(asv_by_ind)[asv_by_ind[i, ] > 0]
+
+  for (j in seq(i, length(asvs))) {
+    inds_j <- colnames(asv_by_ind)[asv_by_ind[j, ] > 0]
+
+    pairwise_distances <- ind_geo_dist[inds_i, inds_j, drop = FALSE]
+
+    d <- summarize_distance(pairwise_distances, na.rm = TRUE)
+
+    asv_geo_dist[i, j] <- d
+    asv_geo_dist[j, i] <- d
+  }
+}
+
+diag(asv_geo_dist) <- 0
+
+if (output_units == "km") {
+  asv_geo_dist <- asv_geo_dist / 1000
+}
+
+# -----------------------------
+# Assign ASVs to regions
+# -----------------------------
+
+individual_region <- individual_coords[, c(individual_col, region_col), drop = FALSE]
+rownames(individual_region) <- individual_region[[individual_col]]
+
+asv_to_regions <- lapply(rownames(asv_by_ind), function(asv) {
+  inds_present <- colnames(asv_by_ind)[asv_by_ind[asv, ] > 0]
+  regions_present <- unique(individual_region[inds_present, region_col])
+  regions_present <- regions_present[!is.na(regions_present)]
+  tolower(regions_present)
+})
+
+names(asv_to_regions) <- rownames(asv_by_ind)
+
+# -----------------------------
+# Plot one graph per top species and run Mantel tests
+# -----------------------------
+
+tax_top10 <- as.data.frame(tax_table(ps_top10_species), check.names = FALSE)
+tax_top10$ASV <- rownames(tax_top10)
+
+plot_list <- list()
+diagnostic_df <- data.frame()
+mantel_results <- data.frame()
+
+for (g in top10_species[[species_col]]) {
+
+  species_asvs <- tax_top10$ASV[tax_top10[[species_col]] == g]
+
+  species_asvs <- Reduce(
+    intersect,
+    list(
+      species_asvs,
+      rownames(phy_matrix),
+      rownames(asv_geo_dist)
+    )
+  )
+
+  n_pairwise <- ifelse(
+    length(species_asvs) >= 2,
+    choose(length(species_asvs), 2),
+    0
+  )
+
+  diagnostic_df <- rbind(
+    diagnostic_df,
+    data.frame(
+      species = g,
+      tips_used = length(species_asvs),
+      pairwise_comparisons = n_pairwise
+    )
+  )
+
+  if (length(species_asvs) < 2) {
+    mantel_results <- rbind(
+      mantel_results,
+      data.frame(
+        species = g,
+        tips_used = length(species_asvs),
+        pairwise_comparisons = n_pairwise,
+        mantel_r = NA_real_,
+        mantel_p = NA_real_
+      )
+    )
+    next
+  }
+
+  phy_sub <- phy_matrix[species_asvs, species_asvs, drop = FALSE]
+  geo_sub <- asv_geo_dist[species_asvs, species_asvs, drop = FALSE]
+
+  lower_tri <- lower.tri(phy_sub)
+
+  plot_df <- data.frame(
+    ASV1 = rownames(phy_sub)[row(phy_sub)[lower_tri]],
+    ASV2 = colnames(phy_sub)[col(phy_sub)[lower_tri]],
+    phy_distance = phy_sub[lower_tri],
+    geo_distance = geo_sub[lower_tri]
+  ) %>%
+    filter(
+      !is.na(phy_distance),
+      !is.na(geo_distance),
+      is.finite(phy_distance),
+      is.finite(geo_distance)
+    )
+
+  if (nrow(plot_df) == 0) {
+    mantel_results <- rbind(
+      mantel_results,
+      data.frame(
+        species = g,
+        tips_used = length(species_asvs),
+        pairwise_comparisons = n_pairwise,
+        mantel_r = NA_real_,
+        mantel_p = NA_real_
+      )
+    )
+    next
+  }
+
+  plot_df$region_pair <- mapply(function(a1, a2) {
+    regions_1 <- asv_to_regions[[a1]]
+    regions_2 <- asv_to_regions[[a2]]
+
+    combined_regions <- unique(c(regions_1, regions_2))
+    combined_regions <- combined_regions[!is.na(combined_regions)]
+
+    if (length(combined_regions) == 1 && combined_regions == "east") {
+      "within east"
+    } else if (length(combined_regions) == 1 && combined_regions == "west") {
+      "within west"
+    } else {
+      "between regions (east vs west)"
+    }
+  }, plot_df$ASV1, plot_df$ASV2)
+
+  plot_df$region_pair <- factor(
+    plot_df$region_pair,
+    levels = c(
+      "within east",
+      "within west",
+      "between regions (east vs west)"
+    )
+  )
+
+  if (length(species_asvs) >= 3) {
+    mantel_out <- vegan::mantel(
+      as.dist(phy_sub),
+      as.dist(geo_sub),
+      method = "spearman",
+      permutations = 999
+    )
+
+    mantel_results <- rbind(
+      mantel_results,
+      data.frame(
+        species = g,
+        tips_used = length(species_asvs),
+        pairwise_comparisons = n_pairwise,
+        mantel_r = unname(mantel_out$statistic),
+        mantel_p = mantel_out$signif
+      )
+    )
+  } else {
+    mantel_results <- rbind(
+      mantel_results,
+      data.frame(
+        species = g,
+        tips_used = length(species_asvs),
+        pairwise_comparisons = n_pairwise,
+        mantel_r = NA_real_,
+        mantel_p = NA_real_
+      )
+    )
+  }
+
+  p <- ggplot(plot_df, aes(x = geo_distance, y = phy_distance)) +
+    geom_point(
+      aes(fill = region_pair),
+      shape = 21,
+      color = "black",
+      alpha = 0.45,
+      size = 1.4,
+      stroke = 0.2
+    ) +
+    scale_fill_manual(
+      values = base_colors,
+      name = "Region"
+    ) +
+    theme_classic() +
+    labs(
+      title = g,
+      x = "Geo distance (km)",
+      y = "Phylo distance"
+    ) +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "italic"),
+      legend.position = "right"
+    )
+
+  if (nrow(plot_df) >= 3 && length(unique(plot_df$geo_distance)) >= 2) {
+    p <- p +
+      geom_smooth(
+        aes(group = 1),
+        method = "lm",
+        se = TRUE,
+        color = line_color,
+        fill = "grey80",
+        linewidth = 1,
+        alpha = 0.25
+      )
+  }
+
+  plot_list[[g]] <- p
+}
+
+print(diagnostic_df)
+
+mantel_results <- mantel_results %>%
+  arrange(mantel_p)
+
+print(mantel_results)
+
+combined_plot <- wrap_plots(plot_list, ncol = 2)
+
+combined_plot
+
+ggsave(
+  filename = "top10_species_geo_phylo_multiplot.pdf",
+  plot = combined_plot,
+  width = 12,
+  height = 16,
+  units = "in"
+)
+
+# Example: view one species plot
+plot_list$Lactobacillus_reuteri
+```
+
 asv phylo and geo matrix v3: groups from the symbiont phylogeny
 ```{r}
 base_colors <- c(
