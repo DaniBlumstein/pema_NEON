@@ -94,18 +94,18 @@ state_colors <- c(
   # WEST (warm tones)
   "California"     = "yellow",  # electric magenta (highly distinct)
   "Washington"     = "#D55E00",
-  "Kansas"         = "#F39B7F",
-  "North Dakota"   = "#C44E52",
   "Utah"           = "#F28E2B",
-  "Colorado"       = "#FF9DA7",
-  "Oklahoma"       = "#B5651D",
   "Wyoming"        = "#E17C05",
+  "Colorado"       = "#FF9DA7",  
+  "North Dakota"   = "#C44E52",
+  "Oklahoma"       = "#B5651D",
+  "Kansas"         = "#F39B7F",
 
   # EAST (cool tones)
-  "New Hampshire"  = "#4DBBD5",
-  "Wisconsin"      = "#3C5488",
+  "Wisconsin"      = "#3C5488",  
+  "Tennessee"      = "#8491B4", 
   "Virginia"       = "#00A087",
-  "Tennessee"      = "#8491B4"
+  "New Hampshire"  = "#4DBBD5"
 )
 
 base_colors <- c(
@@ -177,7 +177,7 @@ ps_sor_dist  <- vegdist(t(ps_otu), method = "bray", binary = TRUE)
 meta <- data.frame(sample_data(ps))
 
 # Assign taxa names
-taxa_names(ps3) <- TAXtab$ASVname
+#taxa_names(ps3) <- TAXtab$ASVname
 
 meta$decimalLatitude  <- as.numeric(meta$decimalLatitude)
 meta$decimalLongitude <- as.numeric(meta$decimalLongitude)
@@ -211,162 +211,1476 @@ rownames(geo_dist) <- rownames(meta)
 colnames(geo_dist) <- rownames(meta)
 ```
 
-ANCOMBC - region
+ANCOMBC - region, w/out structural zeros 
 ```{r}
-# Remove uncultured / unclassified / unidentified taxa
+# =========================================================
+# FILTER TAXA
+# =========================================================
+
 ps2 <- subset_taxa(
   ps,
   !grepl(
-    "uncultured|unclassified|unidentified|unknown|uncultured|uncultured_bacterium",
+    "uncultured|unclassified|unidentified|unknown|uncultured_bacterium",
     Genus,
     ignore.case = TRUE
   )
 )
 
-out = ancombc(data = ps2, formula = "Region", p_adj_method = "fdr")
-
-results_ancom_bc = data.frame(ASV = out$res$lfc$taxon,
-                              lcf = out$res$lfc$Regionwest, 
-                              W = out$res$W$Regionwest, 
-                              p_val = out$res$p_val$Regionwest, 
-                              q_value = out$res$q_val$Regionwest, 
-                              Diff_ab =  out$res$diff_abn$Regionwest)
-results_ancom_bc$lcf = results_ancom_bc$lcf * -1
-
-results_ancom_bc$association = ifelse(
-  results_ancom_bc$q_value < 0.05 & results_ancom_bc$lcf > 0,
-  "east",
-  "Not Significant"
+# Make east the reference group
+sample_data(ps2)$Region <- relevel(
+  factor(sample_data(ps2)$Region),
+  ref = "east"
 )
 
-results_ancom_bc$association = ifelse(results_ancom_bc$q_value < 0.05 & results_ancom_bc$lcf < 0, "west",results_ancom_bc$association)
+# Check sample numbers
+print(table(sample_data(ps2)$Region))
 
-TAXtab =as.data.frame(tax_table(ps2))
+# =========================================================
+# CREATE READABLE ASV NAMES
+# =========================================================
 
-name_tmp = sprintf("ASV%s",seq(1:nrow(TAXtab))) 
-#now let's add some information to this. For example, we want to add the genus, and if not available, the last taxonomic information available.
-TAXtab$name =  TAXtab$Species
-TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Genus, TAXtab$name)
-TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Family, TAXtab$name)
-TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Order, TAXtab$name)
-TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Class, TAXtab$name)
-TAXtab$name = ifelse(is.na(TAXtab$name), TAXtab$Phylum, TAXtab$name)
-unique(is.na(TAXtab$name)) # Ok, we have all names
-
-TAXtab$ASVname = paste(name_tmp, TAXtab$name, sep = "-")
-TAXtab$name[1:10] # ok it looks good.
-
-write.table(
-  TAXtab,
-  file = "TAXtab.tsv",
-  sep = "\t",
-  quote = FALSE
+TAXtab <- as.data.frame(
+  tax_table(ps2),
+  check.names = FALSE,
+  stringsAsFactors = FALSE
 )
 
-results_ancom_bc$ASVname = TAXtab$ASVname[match(results_ancom_bc$ASV ,rownames(TAXtab))]
+TAXtab[] <- lapply(TAXtab, as.character)
 
-results_ancom_bc$Genus = TAXtab$Genus[match(results_ancom_bc$ASV ,rownames(TAXtab))]
-results_sig = results_ancom_bc[results_ancom_bc$q_value < 0.05,]
-table(results_sig$Diff_ab)
-table(results_sig$ASVname,results_sig$Diff_ab, results_sig$Genus)
+# Use the most specific available taxonomic name
+TAXtab$name <- dplyr::coalesce(
+  dplyr::na_if(TAXtab$Species, ""),
+  dplyr::na_if(TAXtab$Genus, ""),
+  dplyr::na_if(TAXtab$Family, ""),
+  dplyr::na_if(TAXtab$Order, ""),
+  dplyr::na_if(TAXtab$Class, ""),
+  dplyr::na_if(TAXtab$Phylum, ""),
+  "Unclassified"
+)
 
-Sum_abundance= colSums(decostand(t(ps_otu), method = "total"))
-results_sig$sum_abundance = Sum_abundance[match(results_sig$ASV, names(Sum_abundance))]
-results_sig = results_sig[order(results_sig$sum_abundance, decreasing = TRUE),]
-results_sig = results_sig[1:14,]
-results_sig$ASVname = factor(results_sig$ASVname, levels = rev(results_sig$ASVname))
+TAXtab$ASVname <- paste0(
+  "ASV",
+  seq_len(nrow(TAXtab)),
+  "-",
+  TAXtab$name
+)
 
+# =========================================================
+# RUN ANCOM-BC
+# =========================================================
 
-# Extract OTU table
-otu_mat <- as.data.frame(otu_table(ps2))
+out <- ancombc(
+  data = ps2,
+  formula = "Region",
+  p_adj_method = "fdr",
+  struc_zero = TRUE,
+  group = "Region"
+)
 
-# Make sure taxa are rows
+# =========================================================
+# IDENTIFY REGION COEFFICIENT
+# =========================================================
+
+coef_name <- grep(
+  "^Region",
+  colnames(out$res$lfc),
+  value = TRUE
+)
+
+if (length(coef_name) != 1) {
+  stop(
+    "Expected exactly one Region coefficient but found: ",
+    paste(coef_name, collapse = ", ")
+  )
+}
+
+message("ANCOM-BC coefficient used: ", coef_name)
+
+# =========================================================
+# CREATE CLEAN ANCOM-BC RESULTS TABLE
+# =========================================================
+
+results_ancom_bc_SZ <- data.frame(
+  ASV = as.character(out$res$lfc$taxon),
+
+  # ANCOM-BC gives west relative to east.
+  # Multiply by -1 to preserve the orientation of the original
+  # plot: positive = east and negative = west.
+  lfc = -as.numeric(out$res$lfc[[coef_name]]),
+
+  W = as.numeric(out$res$W[[coef_name]]),
+  p_value = as.numeric(out$res$p_val[[coef_name]]),
+  q_value = as.numeric(out$res$q_val[[coef_name]]),
+  Diff_ab = as.logical(out$res$diff_abn[[coef_name]]),
+  check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+
+# Add taxonomy
+results_ancom_bc <- results_ancom_bc %>%
+  dplyr::mutate(
+    ASVname = TAXtab$ASVname[
+      match(ASV, rownames(TAXtab))
+    ],
+    Genus = TAXtab$Genus[
+      match(ASV, rownames(TAXtab))
+    ],
+    Species = TAXtab$Species[
+      match(ASV, rownames(TAXtab))
+    ]
+  )
+
+# =========================================================
+# EXTRACT STRUCTURAL-ZERO INFORMATION
+# =========================================================
+
+zero_raw <- as.data.frame(
+  out$zero_ind,
+  check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+
+# Safely create the ASV column without rename()
+if ("taxon" %in% colnames(zero_raw)) {
+
+  colnames(zero_raw)[
+    colnames(zero_raw) == "taxon"
+  ] <- "ASV"
+
+} else if (!"ASV" %in% colnames(zero_raw)) {
+
+  original_rownames <- rownames(zero_raw)
+
+  # Use row names if they contain ASV identifiers
+  if (
+    !is.null(original_rownames) &&
+      !identical(
+        original_rownames,
+        as.character(seq_len(nrow(zero_raw)))
+      )
+  ) {
+
+    zero_raw <- tibble::rownames_to_column(
+      zero_raw,
+      var = "ASV"
+    )
+
+  } else if (nrow(zero_raw) == nrow(results_ancom_bc)) {
+
+    # If row names are only 1, 2, 3..., use the matching
+    # ANCOM-BC taxon order.
+    zero_raw$ASV <- results_ancom_bc$ASV
+
+  } else {
+
+    stop(
+      "Could not match structural-zero results to ASV identifiers."
+    )
+  }
+}
+
+zero_raw$ASV <- as.character(zero_raw$ASV)
+
+# Find the structural-zero columns
+zero_columns <- grep(
+  "^structural_zero",
+  colnames(zero_raw),
+  value = TRUE
+)
+
+# =========================================================
+# CREATE STRUCTURAL-ZERO TABLE AND FLAGS
+# =========================================================
+
+if (length(zero_columns) == 0) {
+
+  structural_zero_table <- data.frame()
+
+  zero_flags <- data.frame(
+    ASV = results_ancom_bc$ASV,
+    structural_zero_any = FALSE,
+    stringsAsFactors = FALSE
+  )
+
+  message(
+    "No structural-zero columns were returned by ANCOM-BC."
+  )
+
+} else {
+
+  # Flag whether each ASV is a structural zero in any Region
+  zero_flags <- zero_raw %>%
+    dplyr::mutate(
+      structural_zero_any = dplyr::if_any(
+        dplyr::all_of(zero_columns),
+        ~ .x %in% c(TRUE, 1, "TRUE", "T", "1")
+      )
+    ) %>%
+    dplyr::select(
+      ASV,
+      structural_zero_any
+    )
+
+  # Long table containing only structural zeros
+  structural_zero_table <- zero_raw %>%
+    tidyr::pivot_longer(
+      cols = dplyr::all_of(zero_columns),
+      names_to = "structural_zero_group",
+      values_to = "structural_zero"
+    ) %>%
+    dplyr::filter(
+      structural_zero %in% c(
+        TRUE,
+        1,
+        "TRUE",
+        "T",
+        "1"
+      )
+    ) %>%
+    dplyr::mutate(
+      Region = dplyr::case_when(
+        grepl(
+          "east",
+          structural_zero_group,
+          ignore.case = TRUE
+        ) ~ "east",
+
+        grepl(
+          "west",
+          structural_zero_group,
+          ignore.case = TRUE
+        ) ~ "west",
+
+        TRUE ~ structural_zero_group
+      ),
+
+      ASVname = TAXtab$ASVname[
+        match(ASV, rownames(TAXtab))
+      ],
+
+      Genus = TAXtab$Genus[
+        match(ASV, rownames(TAXtab))
+      ],
+
+      Species = TAXtab$Species[
+        match(ASV, rownames(TAXtab))
+      ]
+    ) %>%
+    dplyr::select(
+      ASV,
+      ASVname,
+      Genus,
+      Species,
+      Region
+    ) %>%
+    dplyr::distinct() %>%
+    dplyr::arrange(
+      Region,
+      Genus,
+      ASVname
+    )
+}
+
+# =========================================================
+# ADD STRUCTURAL-ZERO STATUS TO RESULTS
+# =========================================================
+
+results_ancom_bc_struct <- results_ancom_bc %>%
+  dplyr::left_join(
+    zero_flags,
+    by = "ASV"
+  ) %>%
+  dplyr::mutate(
+    structural_zero_any = dplyr::coalesce(
+      structural_zero_any,
+      FALSE
+    ),
+
+    # Structural zeros are reported separately.
+    # Inferential significance is evaluated for nonstructural zeros.
+    significant = (
+      !structural_zero_any &
+        !is.na(q_value) &
+        is.finite(q_value) &
+        q_value < 0.05
+    ),
+
+    # Because the fold-change sign was reversed above:
+    # positive = east and negative = west
+    association = dplyr::case_when(
+      significant & lfc > 0 ~ "east",
+      significant & lfc < 0 ~ "west",
+      TRUE ~ "Not significant"
+    ),
+
+    association = factor(
+      association,
+      levels = c(
+        "east",
+        "west",
+        "Not significant"
+      )
+    )
+  )
+
+# =========================================================
+# PRINT COMPLETE RESULTS TABLE
+# =========================================================
+
+cat("\nANCOM-BC results:\n")
+
+results_print <- results_ancom_bc %>%
+  dplyr::select(
+    ASV,
+    ASVname,
+    Genus,
+    Species,
+    lfc,
+    W,
+    p_value,
+    q_value,
+    Diff_ab,
+    structural_zero_any,
+    significant,
+    association
+  )
+
+print(
+  as.data.frame(results_print),
+  row.names = FALSE
+)
+
+# =========================================================
+# PRINT STRUCTURAL-ZERO TABLE
+# =========================================================
+
+cat("\nStructural-zero ASVs:\n")
+
+if (nrow(structural_zero_table) == 0) {
+
+  cat("No structural-zero ASVs were detected.\n")
+
+} else {
+
+  print(
+    as.data.frame(structural_zero_table),
+    row.names = FALSE
+  )
+
+  cat("\nNumber of structural-zero ASVs by Region:\n")
+
+  structural_zero_counts <- structural_zero_table %>%
+    dplyr::count(
+      Region,
+      name = "number_structural_zeros"
+    )
+
+  print(
+    as.data.frame(structural_zero_counts),
+    row.names = FALSE
+  )
+}
+
+# =========================================================
+# CREATE VOLCANO-PLOT DATA
+# =========================================================
+
+# Structural zeros are excluded from the volcano plot because
+# ANCOM-BC may assign them q = 0. This would give -log10(0) = Inf.
+plot_results <- results_ancom_bc %>%
+  dplyr::filter(
+    !structural_zero_any,
+    !is.na(lfc),
+    is.finite(lfc),
+    !is.na(q_value),
+    is.finite(q_value),
+    q_value > 0
+  ) %>%
+  dplyr::mutate(
+    neg_log10_q = -log10(q_value)
+  )
+
+# =========================================================
+# VOLCANO PLOT
+# =========================================================
+
+ancom_volcano <- ggplot(
+  plot_results,
+  aes(
+    x = lfc,
+    y = neg_log10_q
+  )
+) +
+
+  # Nonsignificant points remain gray
+  geom_point(
+    data = plot_results %>%
+      dplyr::filter(!significant),
+    color = "grey60",
+    size = 3,
+    alpha = 0.75
+  ) +
+
+  # Only significant points are colored
+  geom_point(
+    data = plot_results %>%
+      dplyr::filter(significant),
+    aes(color = association),
+    size = 3.5,
+    alpha = 0.90
+  ) +
+
+  # Label only significant points
+  ggrepel::geom_text_repel(
+    data = plot_results %>%
+      dplyr::filter(
+        significant,
+        !is.na(ASVname)
+      ),
+    aes(
+      label = ASVname,
+      color = association
+    ),
+    size = 4,
+    max.overlaps = 30,
+    box.padding = 0.6,
+    point.padding = 0.4,
+    min.segment.length = 0,
+    show.legend = FALSE,
+    seed = 123
+  ) +
+
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    color = "grey50",
+    linewidth = 0.8
+  ) +
+
+  geom_hline(
+    yintercept = -log10(0.05),
+    linetype = "dashed",
+    color = "grey50",
+    linewidth = 0.8
+  ) +
+
+  scale_color_manual(
+    values = c(
+      "east" = "#56B4AE",
+      "west" = "#E3B04B"
+    ),
+    drop = TRUE
+  ) +
+
+  # Add room around points and labels
+  scale_x_continuous(
+    expand = expansion(
+      mult = c(0.08, 0.08)
+    )
+  ) +
+
+  scale_y_continuous(
+    expand = expansion(
+      mult = c(0.03, 0.15)
+    )
+  ) +
+
+  # Prevent labels from being clipped at the panel edge
+  coord_cartesian(
+    clip = "off"
+  ) +
+
+  labs(
+    x = expression(Log[2] ~ "Fold Change"),
+    y = expression(-log[10] ~ "(q-value)"),
+    title = "Differentially Abundant Taxa",
+    color = "Association"
+  ) +
+
+  theme_bw(base_size = 18) +
+
+  theme(
+    plot.title = element_text(
+      size = 22,
+      face = "bold",
+      hjust = 0.5
+    ),
+
+    axis.title = element_text(
+      size = 16
+    ),
+
+    axis.text = element_text(
+      size = 16
+    ),
+
+    legend.title = element_text(
+      size = 16,
+      face = "bold"
+    ),
+
+    legend.text = element_text(
+      size = 14
+    ),
+
+    panel.grid = element_blank(),
+
+    plot.margin = margin(
+      t = 25,
+      r = 80,
+      b = 20,
+      l = 40
+    )
+  )
+
+print(ancom_volcano)
+
+# =========================================================
+# SIGNIFICANT NONSTRUCTURAL-ZERO ASVs
+# =========================================================
+
+results_sig <- results_ancom_bc %>%
+  dplyr::filter(
+    significant
+  ) %>%
+  dplyr::arrange(
+    q_value
+  )
+
+cat("\nSignificant nonstructural-zero ASVs, q < 0.05:\n")
+
+significant_print <- results_sig %>%
+  dplyr::select(
+    ASV,
+    ASVname,
+    Genus,
+    Species,
+    lfc,
+    p_value,
+    q_value,
+    association
+  )
+
+print(
+  as.data.frame(significant_print),
+  row.names = FALSE
+)
+
+# =========================================================
+# CALCULATE TOTAL RELATIVE ABUNDANCE
+# =========================================================
+
+otu_mat <- as(
+  otu_table(ps2),
+  "matrix"
+)
+
+# Ensure taxa are rows and samples are columns
 if (!taxa_are_rows(ps2)) {
   otu_mat <- t(otu_mat)
 }
 
-otu_mat <- as.data.frame(otu_mat)
-
-# Sample metadata
-meta <- as.data.frame(sample_data(ps2))
-
-# Add Region
-meta$SampleID <- rownames(meta)
-
-# Convert OTU matrix to long format
-otu_long <- otu_mat %>%
-  tibble::rownames_to_column("ASV") %>%
-  tidyr::pivot_longer(
-    cols = -ASV,
-    names_to = "SampleID",
-    values_to = "Abundance"
-  ) %>%
-  left_join(meta[, c("SampleID", "Region")],
-            by = "SampleID")
-
-# Get dominant state for each ASV
-asv_state <- otu_long %>%
-  group_by(ASV, Region) %>%
-  summarise(total_abundance = sum(Abundance), .groups = "drop") %>%
-  group_by(ASV) %>%
-  slice_max(total_abundance, n = 1, with_ties = FALSE) %>%
-  ungroup()
-
-# Merge into ANCOMBC results
-results_ancom_bc <- left_join(
-  results_ancom_bc,
-  asv_state[, c("ASV", "Region")],
-  by = "ASV"
+# Sample totals
+sample_totals <- colSums(
+  otu_mat,
+  na.rm = TRUE
 )
 
-ggplot(results_ancom_bc,
-       aes(x = as.numeric(lcf),
-           y = -log10(as.numeric(q_value)),
-           color = Region)) +
-  
-  geom_point(size = 3, alpha = 0.9) +
-  
-  geom_text_repel(
-    data = subset(results_ancom_bc, q_value < 0.05),
-    aes(label = ASVname),
-    size = 4,
-    max.overlaps = 20
-  ) +
-  
-  geom_vline(xintercept = 0,
-             linetype = "dashed",
-             color = "gray50",
-             linewidth = 0.8) +
-  
-  geom_hline(yintercept = -log10(0.05),
-             linetype = "dashed",
-             color = "gray50",
-             linewidth = 0.8) +
-  
-  labs(
-    x = "Log2 Fold Change",
-    y = expression(-log[10](q-value)),
-    title = "Differentially Abundant Taxa",
-    color = "Region"
-  ) +
-  
-  theme_bw(base_size = 18) +
-  
-  theme(
-    plot.title = element_text(size = 22, face = "bold", hjust = 0.5),
-    axis.title = element_text(size = 16),
-    axis.text = element_text(size = 16),
-    legend.title = element_text(size = 16, face = "bold"),
-    legend.text = element_text(size = 14),
-    panel.grid = element_blank()
+sample_totals[sample_totals == 0] <- NA_real_
+
+# Relative abundance within each sample
+otu_relative <- sweep(
+  otu_mat,
+  MARGIN = 2,
+  STATS = sample_totals,
+  FUN = "/"
+)
+
+# Sum relative abundance across samples
+sum_abundance <- rowSums(
+  otu_relative,
+  na.rm = TRUE
+)
+
+# Select the 14 most abundant significant ASVs
+results_sig <- results_sig %>%
+  dplyr::mutate(
+    sum_abundance = sum_abundance[
+      match(ASV, names(sum_abundance))
+    ]
+  ) %>%
+  dplyr::arrange(
+    dplyr::desc(sum_abundance)
+  ) %>%
+  dplyr::slice_head(
+    n = 14
   )
 
-ASVtab_rel = decostand(t(ps_otu), method = "total")
-AASVtab_sig = data.frame(ASVtab_rel[,as.numeric(rownames(results_sig))])
-colnames(AASVtab_sig) = results_sig$ASVname
-AASVtab_sig$Region = meta$Region
-melted = reshape2::melt(AASVtab_sig, values = "Region")
-melted$variable = factor(melted$variable, levels = rev(results_sig$ASVname))
+# Remove ASVs not found in the relative-abundance matrix
+results_sig <- results_sig %>%
+  dplyr::filter(
+    ASV %in% rownames(otu_relative)
+  )
+
+# Set factor order for later plotting
+results_sig$ASVname <- factor(
+  results_sig$ASVname,
+  levels = rev(
+    as.character(results_sig$ASVname)
+  )
+)
+
+# =========================================================
+# CREATE LONG RELATIVE-ABUNDANCE TABLE
+# =========================================================
+
+meta <- as.data.frame(
+  sample_data(ps2)
+) %>%
+  tibble::rownames_to_column(
+    "SampleID"
+  )
+
+if (nrow(results_sig) > 0) {
+
+  ASVtab_sig <- as.data.frame(
+    t(
+      otu_relative[
+        results_sig$ASV,
+        ,
+        drop = FALSE
+      ]
+    )
+  )
+
+  colnames(ASVtab_sig) <- as.character(
+    results_sig$ASVname
+  )
+
+  ASVtab_sig$SampleID <- rownames(
+    ASVtab_sig
+  )
+
+  ASVtab_sig <- ASVtab_sig %>%
+    dplyr::left_join(
+      meta %>%
+        dplyr::select(
+          SampleID,
+          Region
+        ),
+      by = "SampleID"
+    )
+
+  melted <- ASVtab_sig %>%
+    tidyr::pivot_longer(
+      cols = -c(
+        SampleID,
+        Region
+      ),
+      names_to = "ASVname",
+      values_to = "Relative_abundance"
+    ) %>%
+    dplyr::mutate(
+      ASVname = factor(
+        ASVname,
+        levels = levels(
+          results_sig$ASVname
+        )
+      )
+    )
+
+} else {
+
+  ASVtab_sig <- data.frame()
+  melted <- data.frame()
+
+  message(
+    "No significant nonstructural-zero ASVs were available ",
+    "for the relative-abundance table."
+  )
+}
+```
+
+ANCOMBC - region, w/ structural zeros 
+```{r}
+# =========================================================
+# FILTER TAXA
+# =========================================================
+
+ps2 <- subset_taxa(
+  ps,
+  !grepl(
+    "uncultured|unclassified|unidentified|unknown|uncultured_bacterium",
+    Genus,
+    ignore.case = TRUE
+  )
+)
+
+# Set east as the reference group
+sample_data(ps2)$Region <- relevel(
+  factor(sample_data(ps2)$Region),
+  ref = "east"
+)
+
+cat("\nSamples per Region:\n")
+print(table(sample_data(ps2)$Region))
+
+# =========================================================
+# CREATE READABLE ASV NAMES
+# =========================================================
+
+TAXtab <- as.data.frame(
+  tax_table(ps2),
+  check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+
+TAXtab[] <- lapply(
+  TAXtab,
+  as.character
+)
+
+# Use the most specific available classification
+TAXtab$name <- dplyr::coalesce(
+  dplyr::na_if(TAXtab$Species, ""),
+  dplyr::na_if(TAXtab$Genus, ""),
+  dplyr::na_if(TAXtab$Family, ""),
+  dplyr::na_if(TAXtab$Order, ""),
+  dplyr::na_if(TAXtab$Class, ""),
+  dplyr::na_if(TAXtab$Phylum, ""),
+  "Unclassified"
+)
+
+TAXtab$ASVname <- paste0(
+  "ASV",
+  seq_len(nrow(TAXtab)),
+  "-",
+  TAXtab$name
+)
+
+# =========================================================
+# RUN ANCOM-BC WITH STRUCTURAL ZEROS INCLUDED
+# =========================================================
+
+out <- ancombc(
+  data = ps2,
+  formula = "Region",
+  p_adj_method = "fdr",
+  struc_zero = TRUE,
+  group = "Region"
+)
+
+# =========================================================
+# IDENTIFY REGION COEFFICIENT
+# =========================================================
+
+coef_name <- grep(
+  "^Region",
+  colnames(out$res$lfc),
+  value = TRUE
+)
+
+if (length(coef_name) != 1) {
+  stop(
+    "Expected exactly one Region coefficient but found: ",
+    paste(coef_name, collapse = ", ")
+  )
+}
+
+message(
+  "ANCOM-BC coefficient used: ",
+  coef_name
+)
+
+# =========================================================
+# CREATE ANCOM-BC RESULTS TABLE
+# =========================================================
+
+results_ancom_bc <- data.frame(
+  ASV = as.character(
+    out$res$lfc$taxon
+  ),
+
+  # ANCOM-BC returns west relative to east.
+  # Reverse it so:
+  # positive = higher in east
+  # negative = higher in west
+  lfc = -as.numeric(
+    out$res$lfc[[coef_name]]
+  ),
+
+  W = as.numeric(
+    out$res$W[[coef_name]]
+  ),
+
+  p_value = as.numeric(
+    out$res$p_val[[coef_name]]
+  ),
+
+  q_value = as.numeric(
+    out$res$q_val[[coef_name]]
+  ),
+
+  Diff_ab = as.logical(
+    out$res$diff_abn[[coef_name]]
+  ),
+
+  check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+
+# =========================================================
+# IDENTIFY ACTUAL STRUCTURAL-ZERO ASVs
+# =========================================================
+
+if (is.null(out$zero_ind)) {
+  stop(
+    "ANCOM-BC did not return out$zero_ind even though ",
+    "struc_zero = TRUE."
+  )
+}
+
+zero_ind <- as.data.frame(
+  out$zero_ind,
+  check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+
+# Add ASV identifiers
+if ("taxon" %in% colnames(zero_ind)) {
+
+  # Base R avoids conflicts between plyr::rename
+  # and dplyr::rename
+  colnames(zero_ind)[
+    colnames(zero_ind) == "taxon"
+  ] <- "ASV"
+
+} else if (!"ASV" %in% colnames(zero_ind)) {
+
+  zero_rownames <- rownames(zero_ind)
+
+  # Use row names when they contain taxon identifiers
+  if (
+    !is.null(zero_rownames) &&
+      !identical(
+        zero_rownames,
+        as.character(seq_len(nrow(zero_ind)))
+      )
+  ) {
+
+    zero_ind$ASV <- zero_rownames
+
+  } else if (
+    nrow(zero_ind) == nrow(results_ancom_bc)
+  ) {
+
+    # Otherwise use the ANCOM-BC result order
+    zero_ind$ASV <- results_ancom_bc$ASV
+
+  } else {
+
+    stop(
+      "Could not match structural-zero indicators ",
+      "to ASV identifiers."
+    )
+  }
+}
+
+zero_ind$ASV <- as.character(
+  zero_ind$ASV
+)
+
+# Find the actual structural-zero indicator columns
+zero_columns <- grep(
+  "^structural_zero",
+  colnames(zero_ind),
+  value = TRUE
+)
+
+if (length(zero_columns) == 0) {
+
+  structural_zero_ids <- character()
+
+} else {
+
+  zero_matrix <- sapply(
+    zero_ind[
+      ,
+      zero_columns,
+      drop = FALSE
+    ],
+    function(x) {
+      x %in% c(
+        TRUE,
+        1,
+        "TRUE",
+        "T",
+        "1"
+      )
+    }
+  )
+
+  # Maintain matrix form if there is only one column
+  zero_matrix <- as.matrix(
+    zero_matrix
+  )
+
+  structural_zero_ids <- zero_ind$ASV[
+    rowSums(
+      zero_matrix,
+      na.rm = TRUE
+    ) > 0
+  ]
+}
+
+# =========================================================
+# ADD TAXONOMY, SIGNIFICANCE, AND STRUCTURAL-ZERO COLUMN
+# =========================================================
+
+results_ancom_bc <- results_ancom_bc %>%
+  dplyr::mutate(
+    ASVname = TAXtab$ASVname[
+      match(ASV, rownames(TAXtab))
+    ],
+
+    Genus = TAXtab$Genus[
+      match(ASV, rownames(TAXtab))
+    ],
+
+    Species = TAXtab$Species[
+      match(ASV, rownames(TAXtab))
+    ],
+
+    # This column comes from out$zero_ind.
+    # It is used only to control point fill.
+    structural_zero = (
+      ASV %in% structural_zero_ids
+    ),
+
+    # Significance is still based on q < 0.05
+    significant = (
+      !is.na(q_value) &
+        is.finite(q_value) &
+        q_value < 0.05
+    ),
+
+    # Association is still based on the LFC direction
+    association = dplyr::case_when(
+      significant & lfc > 0 ~ "east",
+      significant & lfc < 0 ~ "west",
+      TRUE ~ "Not significant"
+    ),
+
+    association = factor(
+      association,
+      levels = c(
+        "east",
+        "west",
+        "Not significant"
+      )
+    )
+  )
+
+cat("\nStructural-zero status:\n")
+print(table(results_ancom_bc$structural_zero))
+
+# =========================================================
+# PRINT COMPLETE RESULTS
+# =========================================================
+
+cat("\nComplete ANCOM-BC results:\n")
+
+results_print <- results_ancom_bc %>%
+  dplyr::select(
+    ASV,
+    ASVname,
+    Genus,
+    Species,
+    lfc,
+    W,
+    p_value,
+    q_value,
+    Diff_ab,
+    structural_zero,
+    significant,
+    association
+  )
+
+print(
+  as.data.frame(results_print),
+  row.names = FALSE
+)
+
+# =========================================================
+# PRINT AND SAVE STRUCTURAL-ZERO TABLE
+# =========================================================
+
+structural_zero_table <- results_ancom_bc %>%
+  dplyr::filter(
+    structural_zero
+  ) %>%
+  dplyr::select(
+    ASV,
+    ASVname,
+    Genus,
+    Species,
+    lfc,
+    W,
+    p_value,
+    q_value,
+    Diff_ab,
+    structural_zero,
+    significant,
+    association
+  ) %>%
+  dplyr::arrange(
+    association,
+    Genus,
+    ASVname
+  )
+
+cat("\nStructural-zero ASVs:\n")
+
+if (nrow(structural_zero_table) == 0) {
+
+  cat("No structural-zero ASVs were detected.\n")
+
+} else {
+
+  print(
+    as.data.frame(structural_zero_table),
+    row.names = FALSE
+  )
+}
+
+write.csv(
+  structural_zero_table,
+  file = "ANCOMBC_structural_zero_ASVs.csv",
+  row.names = FALSE,
+  na = ""
+)
+
+cat(
+  "\nStructural-zero table saved to:\n",
+  normalizePath("ANCOMBC_structural_zero_ASVs.csv"),
+  "\n"
+)
+
+# =========================================================
+# PREPARE VOLCANO-PLOT DATA
+# =========================================================
+
+plot_results <- results_ancom_bc %>%
+  dplyr::filter(
+    !is.na(lfc),
+    is.finite(lfc),
+    !is.na(q_value)
+  ) %>%
+  dplyr::mutate(
+    # Use the actual ANCOM-BC q-values.
+    # q = 0 becomes Inf and will be placed at the top
+    # using scales::squish_infinite().
+    neg_log10_q = -log10(q_value)
+  )
+
+# =========================================================
+# VOLCANO PLOT
+# Structural-zero status changes only whether points are open
+# =========================================================
+
+ancom_volcano <- ggplot(
+  plot_results,
+  aes(
+    x = lfc,
+    y = neg_log10_q
+  )
+) +
+
+  # Nonsignificant, nonstructural-zero points:
+  # filled gray circles
+  geom_point(
+    data = plot_results %>%
+      dplyr::filter(
+        !significant,
+        !structural_zero
+      ),
+    color = "grey60",
+    size = 3,
+    alpha = 0.75,
+    shape = 16
+  ) +
+
+  # Nonsignificant structural-zero points:
+  # open gray circles
+  geom_point(
+    data = plot_results %>%
+      dplyr::filter(
+        !significant,
+        structural_zero
+      ),
+    color = "grey60",
+    shape = 21,
+    fill = NA,
+    size = 4.2,
+    stroke = 1.4
+  ) +
+
+  # Significant, nonstructural-zero points:
+  # filled colored circles
+  geom_point(
+    data = plot_results %>%
+      dplyr::filter(
+        significant,
+        !structural_zero
+      ),
+    aes(color = association),
+    size = 3.5,
+    alpha = 0.90,
+    shape = 16
+  ) +
+
+  # Significant structural-zero points:
+  # open colored circles
+  geom_point(
+    data = plot_results %>%
+      dplyr::filter(
+        significant,
+        structural_zero
+      ),
+    aes(color = association),
+    shape = 21,
+    fill = NA,
+    size = 4.2,
+    stroke = 1.4
+  ) +
+
+  # Label all significant points
+  ggrepel::geom_text_repel(
+    data = plot_results %>%
+      dplyr::filter(
+        significant,
+        !is.na(ASVname)
+      ),
+    aes(
+      label = ASVname,
+      color = association
+    ),
+    size = 4,
+    max.overlaps = 30,
+    box.padding = 0.6,
+    point.padding = 0.4,
+    min.segment.length = 0,
+    show.legend = FALSE,
+    seed = 123
+  ) +
+
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    color = "grey50",
+    linewidth = 0.8
+  ) +
+
+  geom_hline(
+    yintercept = -log10(0.05),
+    linetype = "dashed",
+    color = "grey50",
+    linewidth = 0.8
+  ) +
+
+  scale_color_manual(
+    values = c(
+      "east" = "#56B4AE",
+      "west" = "#E3B04B"
+    ),
+    drop = TRUE
+  ) +
+
+  scale_x_continuous(
+    expand = expansion(
+      mult = c(0.10, 0.10)
+    )
+  ) +
+
+  # Place q = 0 points at the top of the original finite range.
+  # This does not stretch the y-axis.
+  scale_y_continuous(
+    oob = scales::squish_infinite,
+    expand = expansion(
+      mult = c(0.03, 0.08)
+    )
+  ) +
+
+  coord_cartesian(
+    clip = "off"
+  ) +
+
+  labs(
+    x = expression(Log[2] ~ "Fold Change"),
+    y = expression(-log[10] ~ "(q-value)"),
+    title = "Differentially Abundant Taxa",
+    color = "Association",
+    caption = paste(
+      "Open circles indicate structural-zero ASVs;",
+      "filled circles indicate all other ASVs."
+    )
+  ) +
+
+  theme_bw(base_size = 18) +
+
+  theme(
+    plot.title = element_text(
+      size = 22,
+      face = "bold",
+      hjust = 0.5
+    ),
+
+    plot.caption = element_text(
+      size = 11,
+      hjust = 0
+    ),
+
+    axis.title = element_text(size = 16),
+    axis.text = element_text(size = 16),
+
+    legend.title = element_text(
+      size = 16,
+      face = "bold"
+    ),
+
+    legend.text = element_text(size = 14),
+
+    panel.grid = element_blank(),
+
+    plot.margin = margin(
+      t = 25,
+      r = 80,
+      b = 20,
+      l = 40
+    )
+  )
+
+print(ancom_volcano)
+
+# =========================================================
+# SIGNIFICANT ASV TABLE
+# Structural zeros remain included
+# =========================================================
+
+results_sig <- results_ancom_bc %>%
+  dplyr::filter(
+    significant
+  ) %>%
+  dplyr::arrange(
+    q_value
+  )
+
+cat("\nSignificant ASVs based on q < 0.05:\n")
+
+significant_print <- results_sig %>%
+  dplyr::select(
+    ASV,
+    ASVname,
+    Genus,
+    Species,
+    lfc,
+    p_value,
+    q_value,
+    Diff_ab,
+    structural_zero,
+    association
+  )
+
+print(
+  as.data.frame(significant_print),
+  row.names = FALSE
+)
+
+write.csv(
+  significant_print,
+  file = "ANCOMBC_significant_ASVs.csv",
+  row.names = FALSE,
+  na = ""
+)
+
+cat(
+  "\nSignificant-ASV table saved to:\n",
+  normalizePath("ANCOMBC_significant_ASVs.csv"),
+  "\n"
+)
+
+# =========================================================
+# CALCULATE RELATIVE ABUNDANCE
+# =========================================================
+
+otu_mat <- as(
+  otu_table(ps2),
+  "matrix"
+)
+
+# Ensure taxa are rows and samples are columns
+if (!taxa_are_rows(ps2)) {
+  otu_mat <- t(otu_mat)
+}
+
+sample_totals <- colSums(
+  otu_mat,
+  na.rm = TRUE
+)
+
+sample_totals[
+  sample_totals == 0
+] <- NA_real_
+
+# Relative abundance within each sample
+otu_relative <- sweep(
+  otu_mat,
+  MARGIN = 2,
+  STATS = sample_totals,
+  FUN = "/"
+)
+
+# Total relative abundance across samples
+sum_abundance <- rowSums(
+  otu_relative,
+  na.rm = TRUE
+)
+
+# Select the 14 most abundant significant ASVs
+results_sig <- results_sig %>%
+  dplyr::mutate(
+    sum_abundance = sum_abundance[
+      match(ASV, names(sum_abundance))
+    ]
+  ) %>%
+  dplyr::arrange(
+    dplyr::desc(sum_abundance)
+  ) %>%
+  dplyr::slice_head(
+    n = 14
+  ) %>%
+  dplyr::filter(
+    ASV %in% rownames(otu_relative)
+  )
+
+results_sig$ASVname <- factor(
+  results_sig$ASVname,
+  levels = rev(
+    as.character(results_sig$ASVname)
+  )
+)
+
+# =========================================================
+# CREATE LONG RELATIVE-ABUNDANCE TABLE
+# =========================================================
+
+# Extract metadata as ordinary vectors to avoid the
+# phyloseq sample_data/dplyr error
+metadata_df <- data.frame(
+  SampleID = phyloseq::sample_names(ps2),
+
+  Region = as.character(
+    phyloseq::get_variable(
+      ps2,
+      "Region"
+    )
+  ),
+
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+if (nrow(results_sig) > 0) {
+
+  selected_asvs <- as.character(
+    results_sig$ASV[
+      results_sig$ASV %in% rownames(otu_relative)
+    ]
+  )
+
+  results_sig <- results_sig[
+    results_sig$ASV %in% selected_asvs,
+    ,
+    drop = FALSE
+  ]
+
+  if (length(selected_asvs) > 0) {
+
+    ASVtab_sig <- as.data.frame(
+      t(
+        otu_relative[
+          selected_asvs,
+          ,
+          drop = FALSE
+        ]
+      ),
+      check.names = FALSE,
+      stringsAsFactors = FALSE
+    )
+
+    readable_names <- as.character(
+      results_sig$ASVname[
+        match(
+          selected_asvs,
+          results_sig$ASV
+        )
+      ]
+    )
+
+    colnames(ASVtab_sig) <- readable_names
+
+    ASVtab_sig$SampleID <- rownames(
+      ASVtab_sig
+    )
+
+    rownames(ASVtab_sig) <- NULL
+
+    # Add Region using base R
+    ASVtab_sig$Region <- metadata_df$Region[
+      match(
+        ASVtab_sig$SampleID,
+        metadata_df$SampleID
+      )
+    ]
+
+    melted <- tidyr::pivot_longer(
+      ASVtab_sig,
+      cols = -c(
+        SampleID,
+        Region
+      ),
+      names_to = "ASVname",
+      values_to = "Relative_abundance"
+    )
+
+    melted$ASVname <- factor(
+      melted$ASVname,
+      levels = levels(
+        results_sig$ASVname
+      )
+    )
+
+  } else {
+
+    ASVtab_sig <- data.frame()
+    melted <- data.frame()
+
+    message(
+      "None of the significant ASVs were found ",
+      "in the relative-abundance matrix."
+    )
+  }
+
+} else {
+
+  ASVtab_sig <- data.frame()
+  melted <- data.frame()
+
+  message(
+    "No significant ASVs were available ",
+    "for the relative-abundance table."
+  )
+}
 ```
 
 ANCOM-BC - Habitat
@@ -1389,7 +2703,7 @@ taxa_names(ps3) <- TAXtab$ASVname
 
 
 # Select genus of interest
-g <- "Lactobacillus"
+g <- "Lactobacillus_reuteri"
 #Ruminococcus"
 #Desulfovibrio"
 #Helicobacter"
@@ -1402,7 +2716,7 @@ g <- "Lactobacillus"
 #Lactobacillus"
 
 # Subset phyloseq object for that genus
-ps_g <- subset_taxa(ps3, Genus == g)
+ps_g <- subset_taxa(ps3, Species == g)
 phy_tree <- phy_tree(ps_g)
 
 # Create tree plot
@@ -1442,29 +2756,32 @@ clade_labels <- tip_positions %>%
 tree_plot_flipped <- revts(tree_plot)
 
 tree_plot %<+% tree_df +
-  geom_tippoint(aes(color = Region),
+  geom_tippoint(aes(color = stateProvince),
                 alpha = 0.5,
                 size = 2.5) +
 
-  geom_tiplab(
-    aes(label = label_name),
-    align = FALSE,     # <-- removes vertical guide lines
-    linetype = NULL,   # <-- extra safety (no lines)
-    size = 3,
-    offset = 0.01,    # <-- very small = right at tip
-    hjust = 0,
-    na.rm = TRUE
-  ) +
+ # geom_tiplab(
+    #aes(label = label_name),
+    #align = FALSE,     # <-- removes vertical guide lines
+    #linetype = NULL,   # <-- extra safety (no lines)
+    #size = 3,
+    #offset = 0.01,    # <-- very small = right at tip
+    #hjust = 0,
+    #na.rm = TRUE
+  #) +
 
-  #scale_color_manual(values = east_west_colors) +
-
-  ggtitle(g) +
+  scale_color_manual(
+  values = state_colors,
+  breaks = names(state_colors),
+  name = "State"
+) +
+  ggtitle("Lactobacillus reuteri") +
 
   theme_tree2() +
 
   theme(
-    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
-    legend.position = "right",
+    plot.title = element_text(size = 18, face = "italic", hjust = 0.5),
+    legend.position = "left",
     legend.title = element_text(size = 11),
     legend.text = element_text(size = 10)
   ) +
@@ -2379,6 +3696,16 @@ ggsave(
 
 # Example: view one species plot
 plot_list$Lactobacillus_reuteri
+
+combined_plot_slide <- wrap_plots(plot_list, ncol = 5)
+
+ggsave(
+  filename = "top10_species_geo_phylo_multiplot_slide.pdf",
+  plot = combined_plot_slide,
+  width = 13.33,
+  height = 7.5,
+  units = "in"
+)
 ```
 
 asv phylo and geo matrix v2: colored by region 
@@ -2392,17 +3719,10 @@ lat_col <- "decimalLatitude"
 lon_col <- "decimalLongitude"
 species_col <- "Species"
 region_col <- "Region"
+state_col <- ""
 
 summary_fun <- "mean"   # "mean", "min", or "median"
 output_units <- "km"    # "km" or "m"
-
-base_colors <- c(
-  "within east" = "#5ab4ac",
-  "within west" = "#d8b365",
-  "between regions (east vs west)" = "#D85F64"
-)
-
-line_color <- "grey35"
 
 ambiguous_pattern <- paste(
   c(
@@ -2768,7 +4088,7 @@ for (g in top10_species[[species_col]]) {
     ) +
     theme(
       plot.title = element_text(hjust = 0.5, face = "italic"),
-      legend.position = "right"
+      legend.position = "none"
     )
 
   if (nrow(plot_df) >= 3 && length(unique(plot_df$geo_distance)) >= 2) {
@@ -4210,6 +5530,7 @@ summary <- metadata_filtered_sorted %>%
   group_by(Region) %>%
   summarise(mean_percent = mean(Richness.rar),
             sd_percent = sd(Richness.rar),
+            median = median(Richness.rar),
            .groups = "drop") 
 
 print(summary)
@@ -4241,8 +5562,16 @@ meta$Axis02<-bac.nmds$points[,2]
 bac_nmds <- ggplot(meta, aes(x = Axis01, y = Axis02)) +
   stat_ellipse(aes(fill = stateProvince), geom = "polygon", alpha = 0.45, level = 0.68) +
   geom_point(aes(color = stateProvince), size = 2) +
-  scale_color_manual(values = state_colors, name = "State") +
-  scale_fill_manual(values =  state_colors, name = "State") +
+  
+  scale_color_manual(
+  values = state_colors,
+  breaks = names(state_colors),
+  name = "State")+
+  
+  scale_fill_manual(  values = state_colors,
+  breaks = names(state_colors),
+  name = "State")+
+  
   theme_classic() +
   labs(x = "NMDS1", y = "NMDS2") 
   #ggtitle("Sor dissimilarity")
